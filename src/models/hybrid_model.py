@@ -51,7 +51,7 @@ def select_top_k_recommendations(
             F.col("matched_genres").isNotNull() & (F.size(F.col("matched_genres")) > F.lit(0)),
             F.concat(
                 F.lit("Matched your preferred genres: "),
-                F.array_join(F.expr("slice(matched_genres, 1, 3)"), F.lit(", ")),
+                F.array_join(F.expr("slice(matched_genres, 1, 3)"), ", "),
             ),
         ).otherwise(F.lit("Recommended from collaborative behavior similar to users with close tastes.")),
     )
