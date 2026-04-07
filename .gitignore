@@ -9,6 +9,8 @@ __pycache__/
 .env
 .venv/
 venv/
+.tmp_pytest/
+pytest-cache-files*/
 
 # Runtime outputs
 data/processed/
