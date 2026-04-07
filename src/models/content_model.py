@@ -52,8 +52,12 @@ def score_tag_candidates(
         .join(user_tag_tfidf_df.select("userId", "user_tag_tfidf"), on="userId", how="left")
     )
 
+    with_vectors = tagged_candidates.filter(
+        F.col("user_tag_tfidf").isNotNull() & F.col("movie_tag_tfidf").isNotNull()
+    )
+
     with_arrays = (
-        tagged_candidates.withColumn("user_arr", vector_to_array("user_tag_tfidf"))
+        with_vectors.withColumn("user_arr", vector_to_array("user_tag_tfidf"))
         .withColumn("movie_arr", vector_to_array("movie_tag_tfidf"))
         .withColumn(
             "dot_product",
@@ -78,7 +82,12 @@ def score_tag_candidates(
         )
     )
 
-    return with_arrays.select("userId", "movieId", "content_tag_score")
+    scored_with_vectors = with_arrays.select("userId", "movieId", "content_tag_score")
+    scored_without_vectors = tagged_candidates.filter(
+        F.col("user_tag_tfidf").isNull() | F.col("movie_tag_tfidf").isNull()
+    ).select("userId", "movieId").withColumn("content_tag_score", F.lit(0.0))
+
+    return scored_with_vectors.unionByName(scored_without_vectors)
 
 
 def _score_tag_candidates_legacy(
