@@ -1,14 +1,29 @@
 from __future__ import annotations
 
-from pyspark.ml.functions import vector_to_array
+from pyspark.ml.linalg import Vector
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
+from pyspark.sql.types import DoubleType
 from pyspark.sql.window import Window
 
 from src.utils.logging_utils import get_logger
 
 
 LOGGER = get_logger(__name__)
+
+
+@F.udf(DoubleType())
+def _cosine_similarity_sparse(user_vec: Vector, movie_vec: Vector) -> float:
+    if user_vec is None or movie_vec is None:
+        return 0.0
+
+    user_norm = float(user_vec.norm(2))
+    movie_norm = float(movie_vec.norm(2))
+    if user_norm == 0.0 or movie_norm == 0.0:
+        return 0.0
+
+    dot_product = float(user_vec.dot(movie_vec))
+    return dot_product / (user_norm * movie_norm)
 
 
 def score_content_candidates(
@@ -56,33 +71,14 @@ def score_tag_candidates(
         F.col("user_tag_tfidf").isNotNull() & F.col("movie_tag_tfidf").isNotNull()
     )
 
-    with_arrays = (
-        with_vectors.withColumn("user_arr", vector_to_array("user_tag_tfidf"))
-        .withColumn("movie_arr", vector_to_array("movie_tag_tfidf"))
-        .withColumn(
-            "dot_product",
-            F.expr(
-                "aggregate(zip_with(user_arr, movie_arr, (x, y) -> coalesce(x, 0D) * coalesce(y, 0D)), 0D, (acc, x) -> acc + x)"
-            ),
-        )
-        .withColumn(
-            "user_norm",
-            F.sqrt(F.expr("aggregate(transform(user_arr, x -> x * x), 0D, (acc, x) -> acc + x)")),
-        )
-        .withColumn(
-            "movie_norm",
-            F.sqrt(F.expr("aggregate(transform(movie_arr, x -> x * x), 0D, (acc, x) -> acc + x)")),
-        )
-        .withColumn(
+    scored_vectors = (
+        with_vectors.withColumn(
             "content_tag_score",
-            F.when(
-                (F.col("user_norm") > F.lit(0.0)) & (F.col("movie_norm") > F.lit(0.0)),
-                F.col("dot_product") / (F.col("user_norm") * F.col("movie_norm")),
-            ).otherwise(F.lit(0.0)),
+            _cosine_similarity_sparse(F.col("user_tag_tfidf"), F.col("movie_tag_tfidf")),
         )
     )
 
-    scored_with_vectors = with_arrays.select("userId", "movieId", "content_tag_score")
+    scored_with_vectors = scored_vectors.select("userId", "movieId", "content_tag_score")
     scored_without_vectors = tagged_candidates.filter(
         F.col("user_tag_tfidf").isNull() | F.col("movie_tag_tfidf").isNull()
     ).select("userId", "movieId").withColumn("content_tag_score", F.lit(0.0))
