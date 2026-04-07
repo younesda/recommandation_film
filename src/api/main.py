@@ -92,6 +92,43 @@ def metrics() -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@APP.get("/metrics/rows")
+def metrics_rows() -> Dict[str, Any]:
+    try:
+        raw_metrics = _load_metrics()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    rows = []
+    for key, value in raw_metrics.items():
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        rows.append({"metric": key, "value": numeric_value})
+
+    rows.sort(key=lambda item: item["metric"])
+    return {"rows": rows}
+
+
+@APP.get("/metrics/value")
+def metric_value(metric: str = Query(..., min_length=1)) -> Dict[str, float | str]:
+    try:
+        raw_metrics = _load_metrics()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if metric not in raw_metrics:
+        raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
+
+    try:
+        value = float(raw_metrics[metric])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Metric '{metric}' is not numeric") from exc
+
+    return {"metric": metric, "value": value}
+
+
 @APP.post("/reload")
 def reload_cache() -> Dict[str, str]:
     _load_recommendations.cache_clear()

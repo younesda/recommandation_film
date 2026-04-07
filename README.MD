@@ -25,6 +25,8 @@ os.environ["SPARK_EXECUTOR_MEMORY"] = "6g"
 - `GET /health`
 - `GET /recommend?user_id=1&k=10`
 - `GET /metrics`
+- `GET /metrics/rows`
+- `GET /metrics/value?metric=rmse`
 - `POST /reload`
 
 ## Smoke Test API
@@ -49,6 +51,47 @@ This exports:
 Import these JSON dashboards in Grafana:
 - `dashboards/recommender_quality_dashboard.json`
 - `dashboards/recommender_catalog_dashboard.json`
+- `dashboards/netflix_api_dashboard.json` (API-only, no PostgreSQL)
+
+## Grafana Without PostgreSQL (Parquet + API)
+Use FastAPI as datasource with Grafana Infinity plugin.
+
+1. Run pipeline and API:
+```bash
+python scripts/run_pipeline.py
+python scripts/run_api.py
+```
+
+2. Install Grafana plugin:
+`yesoreyeram-infinity-datasource`
+
+3. Add Infinity datasource:
+- Base URL: `http://localhost:8000` (or your server URL)
+- Access mode: `Server`
+
+4. Create Stat panels using URL queries:
+- `/metrics/value?metric=rmse`
+- `/metrics/value?metric=mae`
+- `/metrics/value?metric=precision_at_10`
+- `/metrics/value?metric=recall_at_10`
+- `/metrics/value?metric=ndcg_at_10`
+
+Use field `value` for each Stat panel.
+
+5. Create Table panel with URL:
+- `/metrics/rows`
+
+Set root selector to `rows`.
+
+6. Create Recommendation table with URL:
+- `/recommend?user_id=1&k=10`
+
+Set root selector to `recommendations`.
+
+Netflix-style option:
+- Import `dashboards/netflix_api_dashboard.json`
+- Set Infinity datasource variable `DS_INFINITY`
+- Keep `api_base` as `http://localhost:8000` (or your server URL)
 
 ## Tests
 ```bash
