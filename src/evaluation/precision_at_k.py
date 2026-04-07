@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+def _top_k_predictions(recommendations_df: DataFrame, k: int) -> DataFrame:
+    if "rank" in recommendations_df.columns:
+        return recommendations_df.filter(F.col("rank") <= F.lit(k)).select("userId", "movieId").dropDuplicates(
+            ["userId", "movieId"]
+        )
+
+    ranking_window = Window.partitionBy("userId").orderBy(F.col("final_score").desc(), F.col("movieId").asc())
+    ranked = recommendations_df.withColumn("rank", F.row_number().over(ranking_window))
+    return ranked.filter(F.col("rank") <= F.lit(k)).select("userId", "movieId").dropDuplicates(["userId", "movieId"])
+
+
+def compute_precision_at_k(
+    recommendations_df: DataFrame,
+    ground_truth_df: DataFrame,
+    k: int = 10,
+    positive_threshold: float = 4.0,
+) -> float:
+    if k <= 0:
+        raise ValueError("k must be > 0 for Precision@K")
+
+    predicted_top_k = _top_k_predictions(recommendations_df, k)
+
+    relevant_items = (
+        ground_truth_df.filter(F.col("rating") >= F.lit(positive_threshold))
+        .select("userId", "movieId")
+        .dropDuplicates(["userId", "movieId"])
+    )
+
+    hits = predicted_top_k.join(relevant_items, on=["userId", "movieId"], how="inner")
+
+    per_user_hits = hits.groupBy("userId").agg(F.count("*").alias("hit_count"))
+    evaluated_users = predicted_top_k.select("userId").distinct()
+
+    precision_by_user = (
+        evaluated_users.join(per_user_hits, on="userId", how="left")
+        .fillna({"hit_count": 0})
+        .withColumn("precision_at_k", F.col("hit_count") / F.lit(float(k)))
+    )
+
+    result = precision_by_user.agg(F.avg("precision_at_k").alias("mean_precision")).collect()[0]["mean_precision"]
+    return float(result) if result is not None else 0.0
