@@ -27,6 +27,12 @@ os.environ["SPARK_EXECUTOR_MEMORY"] = "6g"
 - `GET /metrics`
 - `GET /metrics/rows`
 - `GET /metrics/value?metric=rmse`
+- `GET /metrics/history?metric=rmse`
+- `GET /metrics/history/rows`
+- `GET /dashboard/summary`
+- `GET /dashboard/genres?limit=10`
+- `GET /dashboard/movies?limit=20`
+- `GET /dashboard/final-score-distribution?bins=10`
 - `POST /reload`
 
 ## Smoke Test API
@@ -103,5 +109,14 @@ pytest -q
 - `data/processed/user_profiles` (Parquet)
 - `data/processed/seen_interactions` (Parquet)
 - `data/processed/metrics/metrics.json`
+- `data/processed/metrics/metrics_history.jsonl`
 - `data/processed/metrics/metrics_parquet`
 - `data/processed/models/als`
+
+## Dashboard Ideas
+- Run quality cards: `rmse`, `mae`, `precision_at_10`, `recall_at_10`, `ndcg_at_10`
+- Coverage cards: `users_covered`, `movies_recommended`, `catalog_coverage_ratio`, `user_coverage_ratio`
+- Score health: `avg_final_score`, `p50_final_score`, `p90_final_score`, `avg_als_score`, `avg_content_score`
+- Catalog exploration: `/dashboard/genres`, `/dashboard/movies`
+- Score spread histogram: `/dashboard/final-score-distribution`
+- Trend over runs: `/metrics/history?metric=rmse`, `/metrics/history?metric=ndcg_at_10`

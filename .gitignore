@@ -5,16 +5,30 @@ __pycache__/
 .Python
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
 .ipynb_checkpoints/
 .env
+.env.*
 .venv/
 venv/
 .tmp_pytest/
+.tmp_api_test/
 pytest-cache-files*/
+.python-version
 
 # Runtime outputs
 data/processed/
+spark-warehouse/
+metastore_db/
+derby.log
+*.log
 
 # OS/editor noise
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from typing import Dict
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 
 from src.config.settings import PipelineSettings
 from src.evaluation.mae import compute_mae
@@ -32,7 +34,7 @@ from src.preprocessing.feature_engineering import (
 )
 from src.preprocessing.user_profiles import build_user_genre_profiles, create_user_profiles
 from src.storage.database import save_to_postgres
-from src.storage.save_parquet import save_metrics, save_parquet
+from src.storage.save_parquet import append_metrics_history, save_metrics, save_parquet
 from src.utils.logging_utils import get_logger
 
 
@@ -45,6 +47,7 @@ def _prepare_outputs(base_dir: str) -> Dict[str, str]:
         "user_profiles_parquet": os.path.join(base_dir, "user_profiles"),
         "seen_interactions_parquet": os.path.join(base_dir, "seen_interactions"),
         "metrics_json": os.path.join(base_dir, "metrics", "metrics.json"),
+        "metrics_history_jsonl": os.path.join(base_dir, "metrics", "metrics_history.jsonl"),
         "metrics_parquet": os.path.join(base_dir, "metrics", "metrics_parquet"),
         "als_model": os.path.join(base_dir, "models", "als"),
     }
@@ -60,6 +63,16 @@ def _attach_movie_metadata(recommendations_df: DataFrame, movies_df: DataFrame) 
 
 def _is_empty(df: DataFrame) -> bool:
     return len(df.head(1)) == 0
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator == 0.0:
+        return 0.0
+    return float(numerator / denominator)
+
+
+def _is_windows_without_hadoop() -> bool:
+    return os.name == "nt" and not (os.getenv("HADOOP_HOME") or os.getenv("hadoop.home.dir"))
 
 
 def _exclude_seen_interactions(df: DataFrame, seen_interactions_df: DataFrame) -> DataFrame:
@@ -171,6 +184,67 @@ def _tune_hybrid_weights(
     return best_choice
 
 
+def _compute_dashboard_metrics(
+    recommendation_export_df: DataFrame,
+    movies_clean_df: DataFrame,
+    ratings_clean_df: DataFrame,
+    train_df: DataFrame,
+    val_df: DataFrame,
+    test_df: DataFrame,
+    train_val_df: DataFrame,
+) -> Dict[str, float]:
+    total_recommendations = float(recommendation_export_df.count())
+    active_users = float(ratings_clean_df.select("userId").distinct().count())
+    active_movies = float(movies_clean_df.select("movieId").distinct().count())
+    users_covered = float(recommendation_export_df.select("userId").distinct().count())
+    movies_recommended = float(recommendation_export_df.select("movieId").distinct().count())
+
+    score_stats = recommendation_export_df.agg(
+        F.avg("final_score").alias("avg_final_score"),
+        F.avg("als_score").alias("avg_als_score"),
+        F.avg("content_score").alias("avg_content_score"),
+    ).collect()[0]
+    final_score_quantiles = recommendation_export_df.approxQuantile("final_score", [0.5, 0.9], 0.01)
+
+    recommended_genres_df = (
+        recommendation_export_df.select(F.explode(F.split(F.col("genres"), "\\|")).alias("genre"))
+        .filter(F.col("genre").isNotNull() & (F.trim(F.col("genre")) != F.lit("")))
+    )
+    genres_covered = float(recommended_genres_df.select("genre").distinct().count())
+
+    item_popularity_df = train_val_df.groupBy("movieId").agg(F.count("*").alias("interaction_count")).cache()
+    popularity_quantiles = item_popularity_df.approxQuantile("interaction_count", [0.5], 0.01)
+    popularity_median = float(popularity_quantiles[0]) if popularity_quantiles else 0.0
+    rec_with_popularity_df = recommendation_export_df.join(item_popularity_df, on="movieId", how="left").fillna(
+        {"interaction_count": 0}
+    )
+    long_tail_recommendations = float(
+        rec_with_popularity_df.filter(F.col("interaction_count") <= F.lit(popularity_median)).count()
+    )
+
+    return {
+        "active_users": active_users,
+        "active_movies": active_movies,
+        "train_rows": float(train_df.count()),
+        "val_rows": float(val_df.count()),
+        "test_rows": float(test_df.count()),
+        "recommendation_rows": total_recommendations,
+        "users_covered": users_covered,
+        "movies_recommended": movies_recommended,
+        "user_coverage_ratio": _safe_ratio(users_covered, active_users),
+        "catalog_coverage_ratio": _safe_ratio(movies_recommended, active_movies),
+        "avg_recommendations_per_user": _safe_ratio(total_recommendations, users_covered),
+        "avg_final_score": float(score_stats["avg_final_score"] or 0.0),
+        "p50_final_score": float(final_score_quantiles[0]) if len(final_score_quantiles) > 0 else 0.0,
+        "p90_final_score": float(final_score_quantiles[1]) if len(final_score_quantiles) > 1 else 0.0,
+        "avg_als_score": float(score_stats["avg_als_score"] or 0.0),
+        "avg_content_score": float(score_stats["avg_content_score"] or 0.0),
+        "genres_covered": genres_covered,
+        "popularity_median_interactions": popularity_median,
+        "long_tail_recommendation_share": _safe_ratio(long_tail_recommendations, total_recommendations),
+    }
+
+
 def run_pipeline(
     spark: SparkSession,
     settings: PipelineSettings | None = None,
@@ -219,7 +293,13 @@ def run_pipeline(
     )
 
     als_model = retrain_best_als(train_df, val_df, best_als_params, settings=cfg)
-    als_model.write().overwrite().save(output_paths["als_model"])
+    if _is_windows_without_hadoop():
+        LOGGER.warning(
+            "Skipping ALS model persistence at path=%s because Windows local Spark writes need HADOOP_HOME/winutils.",
+            output_paths["als_model"],
+        )
+    else:
+        als_model.write().overwrite().save(output_paths["als_model"])
 
     train_val_df = train_df.unionByName(val_df).cache()
     seen_interactions_df = train_val_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).cache()
@@ -302,6 +382,16 @@ def run_pipeline(
         "explanation",
     )
 
+    dashboard_metrics = _compute_dashboard_metrics(
+        recommendation_export_df=recommendation_export_df,
+        movies_clean_df=movies_clean,
+        ratings_clean_df=ratings_clean,
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        train_val_df=train_val_df,
+    )
+
     metrics = {
         "rmse": float(rmse),
         "mae": float(mae),
@@ -316,12 +406,18 @@ def run_pipeline(
         "als_reg_param": float(best_als_params["regParam"]),
         "als_max_iter": float(best_als_params["maxIter"]),
         "als_val_rmse": float(best_als_params["val_rmse"]),
+        **dashboard_metrics,
+    }
+    run_record = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        **metrics,
     }
 
     save_parquet(recommendation_export_df, output_paths["recommendations_parquet"])
     save_parquet(user_profiles_df, output_paths["user_profiles_parquet"])
     save_parquet(seen_interactions_df, output_paths["seen_interactions_parquet"])
     save_metrics(metrics, output_paths["metrics_json"])
+    append_metrics_history(run_record, output_paths["metrics_history_jsonl"])
     metrics_df = spark.createDataFrame([(k, float(v)) for k, v in metrics.items()], ["metric", "value"])
     save_parquet(metrics_df, output_paths["metrics_parquet"])
 
