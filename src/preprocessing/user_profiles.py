@@ -14,6 +14,8 @@ def create_user_profiles(ratings_df: DataFrame) -> DataFrame:
     profiles = ratings_df.groupBy("userId").agg(
         F.avg("rating").alias("avg_rating"),
         F.count("*").alias("num_ratings"),
+        F.avg(F.when(F.col("rating") >= F.lit(4.0), F.lit(1.0)).otherwise(F.lit(0.0))).alias("user_positive_rate"),
+        F.coalesce(F.stddev_pop("rating"), F.lit(0.0)).alias("user_rating_stddev"),
         F.min("timestamp").alias("first_rating_ts"),
         F.max("timestamp").alias("last_rating_ts"),
     )

@@ -15,22 +15,32 @@ from src.evaluation.recall_at_k import compute_recall_at_k
 from src.evaluation.rmse import compute_rmse
 from src.ingestion.load_data import load_all_data
 from src.models.als_model import (
-    recommend_for_all_users_flat,
     recommend_for_users_flat,
     retrain_best_als,
+    retrain_best_ranking_als,
     score_als,
     score_als_candidates,
     train_als_with_tuning,
+    train_ranking_als_with_tuning,
+)
+from src.models.candidate_generation import (
+    build_item_ranking_features,
+    generate_popular_candidates,
+    generate_recent_candidates,
+    merge_candidate_sources,
 )
 from src.models.content_model import (
     build_content_scores,
-    combine_content_components,
     generate_content_candidates,
     generate_tag_candidates,
-    score_content_candidates,
-    score_tag_candidates,
 )
-from src.models.hybrid_model import combine_hybrid_scores, select_top_k_recommendations
+from src.models.hybrid_model import select_top_k_recommendations
+from src.models.ranking_model import (
+    build_ranker_training_frame,
+    build_ranking_features,
+    score_candidates_with_ranker,
+    train_xgb_ranker,
+)
 from src.preprocessing.clean_data import clean_movies, clean_ratings, clean_tags, time_based_split
 from src.preprocessing.feature_engineering import (
     add_time_features,
@@ -58,6 +68,7 @@ def _prepare_outputs(base_dir: str) -> Dict[str, str]:
         "metrics_history_jsonl": os.path.join(base_dir, "metrics", "metrics_history.jsonl"),
         "metrics_parquet": os.path.join(base_dir, "metrics", "metrics_parquet"),
         "als_model": os.path.join(base_dir, "models", "als"),
+        "ranking_als_model": os.path.join(base_dir, "models", "ranking_als"),
     }
 
 
@@ -113,125 +124,165 @@ def _resolve_candidate_k(cfg: PipelineSettings) -> int:
     return max(cfg.hybrid.top_k * cfg.hybrid.candidate_multiplier, cfg.hybrid.top_k)
 
 
-def _tune_hybrid_parameters(
-    cfg: PipelineSettings,
-    als_model_train,
-    val_df: DataFrame,
-    seen_train_df: DataFrame,
-    user_genre_profiles_train_df: DataFrame,
-    movie_genre_weights_df: DataFrame,
-    movie_tag_tfidf_train_df: DataFrame | None,
-    user_tag_tfidf_train_df: DataFrame | None,
-    movie_tag_features_train_df: DataFrame | None,
-    user_tag_profiles_train_df: DataFrame | None,
-) -> Dict[str, float]:
-    candidate_k = _resolve_candidate_k(cfg)
-    val_users_df = val_df.select("userId").distinct().cache()
-
-    als_val_candidates_df = recommend_for_users_flat(als_model_train, val_users_df, candidate_k).select("userId", "movieId").cache()
-    genre_val_candidates_df = (
-        generate_content_candidates(
-            user_genre_profiles_df=user_genre_profiles_train_df,
-            movie_genre_weights_df=movie_genre_weights_df,
-            seen_interactions_df=seen_train_df,
-            k=candidate_k,
-        )
-        .select("userId", "movieId")
-        .join(val_users_df, on="userId", how="inner")
-        .cache()
-    )
-    tag_val_candidates_df = (
-        generate_tag_candidates(
-            user_tag_profiles_df=user_tag_profiles_train_df,
-            movie_tag_features_df=movie_tag_features_train_df,
-            seen_interactions_df=seen_train_df,
-            k=candidate_k,
-        )
-        .select("userId", "movieId")
-        .join(val_users_df, on="userId", how="inner")
-        .cache()
+def _zero_source_candidates(candidate_df: DataFrame) -> DataFrame:
+    return candidate_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).select(
+        "userId",
+        "movieId",
+        F.lit(0).alias("source_als_candidate"),
+        F.lit(0).alias("source_content_candidate"),
+        F.lit(0).alias("source_tag_candidate"),
+        F.lit(0).alias("source_popular_candidate"),
+        F.lit(0).alias("source_recent_candidate"),
+        F.lit(0).alias("candidate_source_count"),
     )
 
-    merged_val_candidates_df = (
-        als_val_candidates_df.unionByName(genre_val_candidates_df)
-        .unionByName(tag_val_candidates_df)
+
+def _add_oracle_positives_to_candidates(
+    candidate_sources_df: DataFrame,
+    ground_truth_df: DataFrame,
+    positive_threshold: float,
+) -> DataFrame:
+    oracle_positive_df = (
+        ground_truth_df.filter(F.col("rating") >= F.lit(positive_threshold))
+        .select("userId", "movieId")
         .dropDuplicates(["userId", "movieId"])
     )
-    merged_val_candidates_df = _exclude_seen_interactions(merged_val_candidates_df, seen_train_df).cache()
+    zero_flag_df = _zero_source_candidates(oracle_positive_df)
 
-    if _is_empty(merged_val_candidates_df):
-        return {
-            "als_weight": float(cfg.hybrid.als_weight),
-            "content_weight": float(cfg.hybrid.content_weight),
-            "val_precision": 0.0,
-            "val_ndcg": 0.0,
-        }
+    merged = candidate_sources_df.unionByName(zero_flag_df, allowMissingColumns=True)
+    return (
+        merged.groupBy("userId", "movieId")
+        .agg(
+            F.max("source_als_candidate").alias("source_als_candidate"),
+            F.max("source_content_candidate").alias("source_content_candidate"),
+            F.max("source_tag_candidate").alias("source_tag_candidate"),
+            F.max("source_popular_candidate").alias("source_popular_candidate"),
+            F.max("source_recent_candidate").alias("source_recent_candidate"),
+        )
+        .withColumn(
+            "candidate_source_count",
+            F.col("source_als_candidate")
+            + F.col("source_content_candidate")
+            + F.col("source_tag_candidate")
+            + F.col("source_popular_candidate")
+            + F.col("source_recent_candidate"),
+        )
+    )
 
-    als_val_scores_df = score_als_candidates(als_model_train, merged_val_candidates_df).cache()
-    genre_val_scores_df = score_content_candidates(
-        candidate_items_df=merged_val_candidates_df,
-        user_genre_profiles_df=user_genre_profiles_train_df,
+
+def _compute_candidate_recall(
+    candidates_df: DataFrame,
+    ground_truth_df: DataFrame,
+    positive_threshold: float,
+) -> float:
+    relevant_items = (
+        ground_truth_df.filter(F.col("rating") >= F.lit(positive_threshold))
+        .select("userId", "movieId")
+        .dropDuplicates(["userId", "movieId"])
+    )
+    relevant_count = relevant_items.groupBy("userId").agg(F.count("*").alias("relevant_count"))
+    hit_count = (
+        candidates_df.select("userId", "movieId")
+        .dropDuplicates(["userId", "movieId"])
+        .join(relevant_items, on=["userId", "movieId"], how="inner")
+        .groupBy("userId")
+        .agg(F.count("*").alias("hit_count"))
+    )
+    recall_df = (
+        relevant_count.join(hit_count, on="userId", how="left")
+        .fillna({"hit_count": 0})
+        .withColumn(
+            "candidate_recall",
+            F.when(F.col("relevant_count") > F.lit(0), F.col("hit_count") / F.col("relevant_count")).otherwise(F.lit(0.0)),
+        )
+    )
+    result = recall_df.agg(F.avg("candidate_recall").alias("mean_candidate_recall")).collect()[0]["mean_candidate_recall"]
+    return float(result) if result is not None else 0.0
+
+
+def _build_multi_source_candidates(
+    users_df: DataFrame,
+    ranking_als_model,
+    seen_interactions_df: DataFrame,
+    user_genre_profiles_df: DataFrame,
+    movie_genre_weights_df: DataFrame,
+    user_tag_profiles_df: DataFrame | None,
+    movie_tag_features_df: DataFrame | None,
+    item_features_df: DataFrame,
+    candidate_k: int,
+) -> Dict[str, DataFrame]:
+    user_genre_subset_df = user_genre_profiles_df.join(users_df, on="userId", how="inner").cache()
+    user_tag_subset_df = None
+    if user_tag_profiles_df is not None:
+        user_tag_subset_df = user_tag_profiles_df.join(users_df, on="userId", how="inner").cache()
+
+    als_candidates_df = recommend_for_users_flat(ranking_als_model, users_df, candidate_k).select("userId", "movieId", "als_score").cache()
+    genre_candidates_df = generate_content_candidates(
+        user_genre_profiles_df=user_genre_subset_df,
         movie_genre_weights_df=movie_genre_weights_df,
+        seen_interactions_df=seen_interactions_df,
+        k=candidate_k,
     ).cache()
-    tag_val_scores_df = score_tag_candidates(
-        candidate_items_df=merged_val_candidates_df,
-        user_tag_tfidf_df=user_tag_tfidf_train_df,
-        movie_tag_tfidf_df=movie_tag_tfidf_train_df,
+    tag_candidates_df = generate_tag_candidates(
+        user_tag_profiles_df=user_tag_subset_df,
+        movie_tag_features_df=movie_tag_features_df,
+        seen_interactions_df=seen_interactions_df,
+        k=candidate_k,
+    ).cache()
+    popular_candidates_df = generate_popular_candidates(
+        user_genre_profiles_df=user_genre_subset_df,
+        movie_genre_weights_df=movie_genre_weights_df,
+        item_features_df=item_features_df,
+        seen_interactions_df=seen_interactions_df,
+        k=candidate_k,
+    ).cache()
+    recent_candidates_df = generate_recent_candidates(
+        user_genre_profiles_df=user_genre_subset_df,
+        movie_genre_weights_df=movie_genre_weights_df,
+        item_features_df=item_features_df,
+        seen_interactions_df=seen_interactions_df,
+        k=candidate_k,
     ).cache()
 
-    best_choice = {
-        "als_weight": float(cfg.hybrid.als_weight),
-        "content_weight": float(cfg.hybrid.content_weight),
-        "tag_weight": 0.2,
-        "val_precision": -1.0,
-        "val_ndcg": -1.0,
+    candidate_sources_df = merge_candidate_sources(
+        als_candidates_df=als_candidates_df,
+        content_candidates_df=genre_candidates_df,
+        tag_candidates_df=tag_candidates_df,
+        popular_candidates_df=popular_candidates_df,
+        recent_candidates_df=recent_candidates_df,
+    )
+    candidate_sources_df = _exclude_seen_interactions(candidate_sources_df, seen_interactions_df).cache()
+
+    return {
+        "als_candidates": als_candidates_df,
+        "genre_candidates": genre_candidates_df,
+        "tag_candidates": tag_candidates_df,
+        "popular_candidates": popular_candidates_df,
+        "recent_candidates": recent_candidates_df,
+        "candidate_sources": candidate_sources_df,
     }
 
-    for tag_weight in cfg.hybrid.tag_weight_candidates:
-        content_val_scores_df = combine_content_components(
-            candidate_items_df=merged_val_candidates_df,
-            genre_scores_df=genre_val_scores_df,
-            tag_scores_df=tag_val_scores_df,
-            tag_weight=tag_weight,
-        ).cache()
 
-        for als_weight in cfg.hybrid.hybrid_weight_candidates:
-            content_weight = 1.0 - als_weight
-            hybrid_val_df = combine_hybrid_scores(
-                als_scores_df=als_val_scores_df,
-                content_scores_df=content_val_scores_df,
-                settings=cfg,
-                als_weight=als_weight,
-                content_weight=content_weight,
-            )
-            top_val_df = select_top_k_recommendations(hybrid_val_df, cfg.hybrid.top_k)
-
-            precision_val = compute_precision_at_k(
-                recommendations_df=top_val_df.select("userId", "movieId", "rank", "final_score"),
-                ground_truth_df=val_df,
-                k=cfg.hybrid.top_k,
-                positive_threshold=cfg.min_positive_rating,
-            )
-            ndcg_val = compute_ndcg_at_k(
-                recommendations_df=top_val_df.select("userId", "movieId", "rank", "final_score"),
-                ground_truth_df=val_df,
-                k=cfg.hybrid.top_k,
-                positive_threshold=cfg.min_positive_rating,
-            )
-
-            is_better = (ndcg_val > best_choice["val_ndcg"]) or (
-                ndcg_val == best_choice["val_ndcg"] and precision_val > best_choice["val_precision"]
-            )
-            if is_better:
-                best_choice = {
-                    "als_weight": float(als_weight),
-                    "content_weight": float(content_weight),
-                    "tag_weight": float(tag_weight),
-                    "val_precision": float(precision_val),
-                    "val_ndcg": float(ndcg_val),
-                }
-
-    return best_choice
+def _build_content_feature_scores(
+    candidate_sources_df: DataFrame,
+    user_genre_profiles_df: DataFrame,
+    movie_genre_weights_df: DataFrame,
+    user_tag_tfidf_df: DataFrame | None,
+    movie_tag_tfidf_df: DataFrame | None,
+    user_tag_profiles_df: DataFrame | None,
+    movie_tag_features_df: DataFrame | None,
+    tag_weight: float,
+) -> DataFrame:
+    return build_content_scores(
+        candidate_items_df=candidate_sources_df.select("userId", "movieId"),
+        user_genre_profiles_df=user_genre_profiles_df,
+        movie_genre_weights_df=movie_genre_weights_df,
+        user_tag_tfidf_df=user_tag_tfidf_df,
+        movie_tag_tfidf_df=movie_tag_tfidf_df,
+        user_tag_profiles_df=user_tag_profiles_df,
+        movie_tag_features_df=movie_tag_features_df,
+        tag_weight=tag_weight,
+    ).cache()
 
 
 def _compute_dashboard_metrics(
@@ -306,6 +357,8 @@ def run_pipeline(
 ) -> Dict[str, float | str]:
     cfg = settings or PipelineSettings()
     output_paths = _prepare_outputs(cfg.data_paths.output_base)
+    candidate_k = _resolve_candidate_k(cfg)
+    content_tag_weight = 0.3
 
     LOGGER.info("Pipeline started")
     ratings_df, movies_df, tags_df = load_all_data(spark=spark, settings=cfg, prefer_parquet=True)
@@ -315,109 +368,169 @@ def run_pipeline(
     ratings_clean = clean_ratings(ratings_df, settings=cfg).cache()
     ratings_features = add_time_features(ratings_clean).cache()
 
-    user_profiles_df = create_user_profiles(ratings_features).cache()
     movie_genres_df = encode_genres(movies_clean).cache()
     movie_genre_weights_df = build_movie_genre_weights(movie_genres_df).cache()
-    candidate_k = _resolve_candidate_k(cfg)
 
     train_df, val_df, test_df = time_based_split(ratings_features, settings=cfg)
     train_df = train_df.cache()
     val_df = val_df.cache()
     test_df = test_df.cache()
 
-    als_model_train, best_als_params = train_als_with_tuning(train_df, val_df, settings=cfg)
+    explicit_als_train_model, best_als_params = train_als_with_tuning(train_df, val_df, settings=cfg)
+    ranking_als_train_model, best_ranking_als_params = train_ranking_als_with_tuning(train_df, val_df, settings=cfg)
 
+    train_user_profiles_df = create_user_profiles(train_df).cache()
     user_genre_profiles_train_df = build_user_genre_profiles(train_df, movie_genres_df).cache()
     seen_train_df = train_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).cache()
+    item_features_train_df = build_item_ranking_features(train_df, positive_threshold=cfg.min_positive_rating).cache()
+
     tags_train_df = filter_tags_to_training_window(tags_clean, train_df).cache()
     movie_tag_tfidf_train_df, user_tag_tfidf_train_df = _build_tag_tfidf_if_available(use_tags, tags_train_df)
     movie_tag_features_train_df, user_tag_profiles_train_df = _build_tag_profiles_if_available(use_tags, tags_train_df)
 
-    best_hybrid = _tune_hybrid_parameters(
-        cfg=cfg,
-        als_model_train=als_model_train,
-        val_df=val_df,
-        seen_train_df=seen_train_df,
-        user_genre_profiles_train_df=user_genre_profiles_train_df,
+    val_users_df = val_df.select("userId").distinct().cache()
+    ranking_train_candidates = _build_multi_source_candidates(
+        users_df=val_users_df,
+        ranking_als_model=ranking_als_train_model,
+        seen_interactions_df=seen_train_df,
+        user_genre_profiles_df=user_genre_profiles_train_df,
         movie_genre_weights_df=movie_genre_weights_df,
-        movie_tag_tfidf_train_df=movie_tag_tfidf_train_df,
-        user_tag_tfidf_train_df=user_tag_tfidf_train_df,
-        movie_tag_features_train_df=movie_tag_features_train_df,
-        user_tag_profiles_train_df=user_tag_profiles_train_df,
+        user_tag_profiles_df=user_tag_profiles_train_df,
+        movie_tag_features_df=movie_tag_features_train_df,
+        item_features_df=item_features_train_df,
+        candidate_k=candidate_k,
     )
 
-    als_model = retrain_best_als(train_df, val_df, best_als_params, settings=cfg)
+    val_candidate_recall = _compute_candidate_recall(
+        ranking_train_candidates["candidate_sources"],
+        val_df,
+        positive_threshold=cfg.min_positive_rating,
+    )
+
+    ranking_train_sources_df = _add_oracle_positives_to_candidates(
+        ranking_train_candidates["candidate_sources"],
+        val_df,
+        positive_threshold=cfg.min_positive_rating,
+    ).cache()
+    ranking_train_content_scores_df = _build_content_feature_scores(
+        candidate_sources_df=ranking_train_sources_df,
+        user_genre_profiles_df=user_genre_profiles_train_df,
+        movie_genre_weights_df=movie_genre_weights_df,
+        user_tag_tfidf_df=user_tag_tfidf_train_df,
+        movie_tag_tfidf_df=movie_tag_tfidf_train_df,
+        user_tag_profiles_df=user_tag_profiles_train_df,
+        movie_tag_features_df=movie_tag_features_train_df,
+        tag_weight=content_tag_weight,
+    )
+    ranking_train_collab_scores_df = score_als_candidates(
+        ranking_als_train_model,
+        ranking_train_sources_df.select("userId", "movieId"),
+    ).cache()
+    ranking_train_explicit_scores_df = score_als_candidates(
+        explicit_als_train_model,
+        ranking_train_sources_df.select("userId", "movieId"),
+    ).cache()
+    ranking_train_feature_df = build_ranking_features(
+        candidate_sources_df=ranking_train_sources_df,
+        collaborative_scores_df=ranking_train_collab_scores_df,
+        explicit_scores_df=ranking_train_explicit_scores_df,
+        content_scores_df=ranking_train_content_scores_df,
+        item_features_df=item_features_train_df,
+        user_profiles_df=train_user_profiles_df,
+    ).cache()
+    ranker_training_df = build_ranker_training_frame(
+        feature_df=ranking_train_feature_df,
+        ground_truth_df=val_df,
+        positive_threshold=cfg.min_positive_rating,
+    ).cache()
+    ranker_model, ranker_feature_cols, ranker_info = train_xgb_ranker(ranker_training_df, settings=cfg)
+
+    explicit_als_model = retrain_best_als(train_df, val_df, best_als_params, settings=cfg)
+    ranking_als_model = retrain_best_ranking_als(train_df, val_df, best_ranking_als_params, settings=cfg)
+
     if _is_windows_without_hadoop():
         LOGGER.warning(
             "Skipping ALS model persistence at path=%s because Windows local Spark writes need HADOOP_HOME/winutils.",
             output_paths["als_model"],
         )
     else:
-        als_model.write().overwrite().save(output_paths["als_model"])
+        explicit_als_model.write().overwrite().save(output_paths["als_model"])
+        ranking_als_model.write().overwrite().save(output_paths["ranking_als_model"])
 
     train_val_df = train_df.unionByName(val_df).cache()
     seen_interactions_df = train_val_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).cache()
-
-    als_predictions_test = score_als(als_model, test_df)
-    rmse = compute_rmse(als_predictions_test)
-    mae = compute_mae(als_predictions_test)
-
+    user_profiles_final_df = create_user_profiles(train_val_df).cache()
     user_genre_profiles_final_df = build_user_genre_profiles(train_val_df, movie_genres_df).cache()
+    item_features_final_df = build_item_ranking_features(train_val_df, positive_threshold=cfg.min_positive_rating).cache()
+
     tags_train_val_df = filter_tags_to_training_window(tags_clean, train_val_df).cache()
     movie_tag_tfidf_final_df, user_tag_tfidf_final_df = _build_tag_tfidf_if_available(use_tags, tags_train_val_df)
     movie_tag_features_final_df, user_tag_profiles_final_df = _build_tag_profiles_if_available(use_tags, tags_train_val_df)
 
-    als_candidates_df = recommend_for_all_users_flat(als_model, candidate_k).select("userId", "movieId").cache()
-    genre_candidates_df = (
-        generate_content_candidates(
-            user_genre_profiles_df=user_genre_profiles_final_df,
-            movie_genre_weights_df=movie_genre_weights_df,
-            seen_interactions_df=seen_interactions_df,
-            k=candidate_k,
-        )
-        .select("userId", "movieId")
-        .cache()
-    )
-    tag_candidates_df = (
-        generate_tag_candidates(
-            user_tag_profiles_df=user_tag_profiles_final_df,
-            movie_tag_features_df=movie_tag_features_final_df,
-            seen_interactions_df=seen_interactions_df,
-            k=candidate_k,
-        )
-        .select("userId", "movieId")
-        .cache()
+    als_predictions_test = score_als(explicit_als_model, test_df)
+    rmse = compute_rmse(als_predictions_test)
+    mae = compute_mae(als_predictions_test)
+
+    all_users_df = train_val_df.select("userId").distinct().cache()
+    final_candidates = _build_multi_source_candidates(
+        users_df=all_users_df,
+        ranking_als_model=ranking_als_model,
+        seen_interactions_df=seen_interactions_df,
+        user_genre_profiles_df=user_genre_profiles_final_df,
+        movie_genre_weights_df=movie_genre_weights_df,
+        user_tag_profiles_df=user_tag_profiles_final_df,
+        movie_tag_features_df=movie_tag_features_final_df,
+        item_features_df=item_features_final_df,
+        candidate_k=candidate_k,
     )
 
-    merged_candidates_df = (
-        als_candidates_df.unionByName(genre_candidates_df)
-        .unionByName(tag_candidates_df)
-        .dropDuplicates(["userId", "movieId"])
+    test_candidate_recall = _compute_candidate_recall(
+        final_candidates["candidate_sources"],
+        test_df,
+        positive_threshold=cfg.min_positive_rating,
     )
-    merged_candidates_df = _exclude_seen_interactions(merged_candidates_df, seen_interactions_df).cache()
 
-    content_scores_df = build_content_scores(
-        candidate_items_df=merged_candidates_df,
+    final_content_scores_df = _build_content_feature_scores(
+        candidate_sources_df=final_candidates["candidate_sources"],
         user_genre_profiles_df=user_genre_profiles_final_df,
         movie_genre_weights_df=movie_genre_weights_df,
         user_tag_tfidf_df=user_tag_tfidf_final_df,
         movie_tag_tfidf_df=movie_tag_tfidf_final_df,
         user_tag_profiles_df=user_tag_profiles_final_df,
         movie_tag_features_df=movie_tag_features_final_df,
-        tag_weight=best_hybrid["tag_weight"],
+        tag_weight=content_tag_weight,
+    )
+    final_collab_scores_df = score_als_candidates(
+        ranking_als_model,
+        final_candidates["candidate_sources"].select("userId", "movieId"),
+    ).cache()
+    final_explicit_scores_df = score_als_candidates(
+        explicit_als_model,
+        final_candidates["candidate_sources"].select("userId", "movieId"),
+    ).cache()
+    final_feature_df = build_ranking_features(
+        candidate_sources_df=final_candidates["candidate_sources"],
+        collaborative_scores_df=final_collab_scores_df,
+        explicit_scores_df=final_explicit_scores_df,
+        content_scores_df=final_content_scores_df,
+        item_features_df=item_features_final_df,
+        user_profiles_df=user_profiles_final_df,
     ).cache()
 
-    als_scores_df = score_als_candidates(als_model, merged_candidates_df).cache()
-    hybrid_scores_df = combine_hybrid_scores(
-        als_scores_df=als_scores_df,
-        content_scores_df=content_scores_df,
-        settings=cfg,
-        als_weight=best_hybrid["als_weight"],
-        content_weight=best_hybrid["content_weight"],
+    ranker_scores_df = score_candidates_with_ranker(
+        spark=spark,
+        candidate_feature_df=final_feature_df,
+        ranker_model=ranker_model,
+        feature_cols=ranker_feature_cols,
     )
-    hybrid_scores_df = _exclude_seen_interactions(hybrid_scores_df, seen_interactions_df).cache()
+    ranked_candidates_df = (
+        final_feature_df.join(ranker_scores_df, on=["userId", "movieId"], how="inner")
+        .withColumn("als_score", F.col("cf_score"))
+        .cache()
+    )
+    ranked_candidates_df = _exclude_seen_interactions(ranked_candidates_df, seen_interactions_df).cache()
 
-    top_recommendations_df = select_top_k_recommendations(hybrid_scores_df, cfg.hybrid.top_k)
+    top_recommendations_df = select_top_k_recommendations(ranked_candidates_df, cfg.hybrid.top_k)
     top_recommendations_df = _attach_movie_metadata(top_recommendations_df, movies_clean).cache()
 
     precision_k = compute_precision_at_k(
@@ -446,8 +559,16 @@ def run_pipeline(
         "genres",
         "rank",
         "als_score",
+        "explicit_als_score",
         "content_score",
+        "content_genre_score",
+        "content_tag_score",
         "final_score",
+        "source_als_candidate",
+        "source_content_candidate",
+        "source_tag_candidate",
+        "source_popular_candidate",
+        "source_recent_candidate",
         "explanation",
     )
 
@@ -467,11 +588,25 @@ def run_pipeline(
         f"precision_at_{cfg.hybrid.top_k}": float(precision_k),
         f"recall_at_{cfg.hybrid.top_k}": float(recall_k),
         f"ndcg_at_{cfg.hybrid.top_k}": float(ndcg_k),
-        "hybrid_als_weight": float(best_hybrid["als_weight"]),
-        "hybrid_content_weight": float(best_hybrid["content_weight"]),
-        "content_tag_weight": float(best_hybrid["tag_weight"]),
-        "val_precision_at_k": float(best_hybrid["val_precision"]),
-        "val_ndcg_at_k": float(best_hybrid["val_ndcg"]),
+        "content_tag_weight": float(content_tag_weight),
+        "candidate_pool_size": float(candidate_k),
+        "val_candidate_recall": float(val_candidate_recall),
+        "test_candidate_recall": float(test_candidate_recall),
+        "ranker_val_precision_at_k": float(ranker_info["ranker_val_precision_at_k"]),
+        "ranker_val_recall_at_k": float(ranker_info["ranker_val_recall_at_k"]),
+        "ranker_val_ndcg_at_k": float(ranker_info["ranker_val_ndcg_at_k"]),
+        "ranker_n_estimators": float(ranker_info["ranker_n_estimators"]),
+        "ranker_max_depth": float(ranker_info["ranker_max_depth"]),
+        "ranker_learning_rate": float(ranker_info["ranker_learning_rate"]),
+        "ranker_min_child_weight": float(ranker_info["ranker_min_child_weight"]),
+        "ranker_feature_count": float(ranker_info["ranker_feature_count"]),
+        "ranking_als_rank": float(best_ranking_als_params["rank"]),
+        "ranking_als_reg_param": float(best_ranking_als_params["regParam"]),
+        "ranking_als_alpha": float(best_ranking_als_params["alpha"]),
+        "ranking_als_max_iter": float(best_ranking_als_params["maxIter"]),
+        "ranking_als_val_precision_at_k": float(best_ranking_als_params["val_precision"]),
+        "ranking_als_val_recall_at_k": float(best_ranking_als_params["val_recall"]),
+        "ranking_als_val_ndcg_at_k": float(best_ranking_als_params["val_ndcg"]),
         "als_rank": float(best_als_params["rank"]),
         "als_reg_param": float(best_als_params["regParam"]),
         "als_max_iter": float(best_als_params["maxIter"]),
@@ -484,7 +619,7 @@ def run_pipeline(
     }
 
     save_parquet(recommendation_export_df, output_paths["recommendations_parquet"])
-    save_parquet(user_profiles_df, output_paths["user_profiles_parquet"])
+    save_parquet(user_profiles_final_df, output_paths["user_profiles_parquet"])
     save_parquet(seen_interactions_df, output_paths["seen_interactions_parquet"])
     save_metrics(metrics, output_paths["metrics_json"])
     append_metrics_history(run_record, output_paths["metrics_history_jsonl"])

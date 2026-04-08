@@ -73,6 +73,14 @@ def select_top_k_recommendations(
                 F.lit("Matched your preferred genres: "),
                 F.array_join(F.expr("slice(matched_genres, 1, 3)"), ", "),
             ),
+        )
+        .when(
+            F.coalesce(F.col("source_recent_candidate"), F.lit(0)) > F.lit(0),
+            F.lit("Recently trending inside the genres you engage with the most."),
+        )
+        .when(
+            F.coalesce(F.col("source_popular_candidate"), F.lit(0)) > F.lit(0),
+            F.lit("Popular among users with similar genre preferences."),
         ).otherwise(F.lit("Recommended from collaborative behavior similar to users with close tastes.")),
     )
     return with_reason

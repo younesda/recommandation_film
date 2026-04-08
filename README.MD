@@ -21,6 +21,11 @@ os.environ["SPARK_EXECUTOR_MEMORY"] = "6g"
 !python scripts/run_pipeline.py
 ```
 
+The ranking stack now uses:
+- explicit ALS for `RMSE` / `MAE`
+- implicit ALS for collaborative candidate generation
+- XGBoost ranker for final recommendation ordering
+
 ## API Endpoints
 - `GET /health`
 - `GET /recommend?user_id=1&k=10`
@@ -115,6 +120,8 @@ pytest -q
 
 ## Dashboard Ideas
 - Run quality cards: `rmse`, `mae`, `precision_at_10`, `recall_at_10`, `ndcg_at_10`
+- Retrieval cards: `val_candidate_recall`, `test_candidate_recall`, `candidate_pool_size`
+- Ranker cards: `ranker_val_ndcg_at_k`, `ranker_n_estimators`, `ranking_als_alpha`
 - Coverage cards: `users_covered`, `movies_recommended`, `catalog_coverage_ratio`, `user_coverage_ratio`
 - Score health: `avg_final_score`, `p50_final_score`, `p90_final_score`, `avg_als_score`, `avg_content_score`
 - Catalog exploration: `/dashboard/genres`, `/dashboard/movies`
