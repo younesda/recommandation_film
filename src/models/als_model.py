@@ -48,7 +48,7 @@ def train_als_with_tuning(
                 model = _build_als(rank, reg_param, max_iter, cfg.als.seed).fit(train_df)
                 predictions = model.transform(val_df).dropna(subset=["prediction"])
 
-                if predictions.rdd.isEmpty():
+                if len(predictions.head(1)) == 0:
                     LOGGER.warning(
                         "Skipping ALS config rank=%s regParam=%s maxIter=%s because validation predictions are empty",
                         rank,

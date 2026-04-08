@@ -13,8 +13,8 @@ class DataPaths:
 
 @dataclass(frozen=True)
 class ALSSettings:
-    rank_candidates: List[int] = field(default_factory=lambda: [32, 64])
-    reg_param_candidates: List[float] = field(default_factory=lambda: [0.05, 0.1])
+    rank_candidates: List[int] = field(default_factory=lambda: [32, 48, 64, 96])
+    reg_param_candidates: List[float] = field(default_factory=lambda: [0.03, 0.05, 0.08, 0.1, 0.12])
     max_iter_candidates: List[int] = field(default_factory=lambda: [10, 15])
     seed: int = 42
 
@@ -24,7 +24,9 @@ class HybridSettings:
     als_weight: float = 0.7
     content_weight: float = 0.3
     top_k: int = 10
-    candidate_multiplier: int = 5
+    candidate_multiplier: int = 20
+    hybrid_weight_candidates: List[float] = field(default_factory=lambda: [0.2, 0.35, 0.5, 0.65, 0.8, 0.9])
+    tag_weight_candidates: List[float] = field(default_factory=lambda: [0.0, 0.1, 0.2, 0.3])
 
 
 @dataclass(frozen=True)

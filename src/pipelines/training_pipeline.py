@@ -22,17 +22,25 @@ from src.models.als_model import (
     score_als_candidates,
     train_als_with_tuning,
 )
-from src.models.content_model import build_content_scores, generate_content_candidates
+from src.models.content_model import (
+    build_content_scores,
+    combine_content_components,
+    generate_content_candidates,
+    generate_tag_candidates,
+    score_content_candidates,
+    score_tag_candidates,
+)
 from src.models.hybrid_model import combine_hybrid_scores, select_top_k_recommendations
 from src.preprocessing.clean_data import clean_movies, clean_ratings, clean_tags, time_based_split
 from src.preprocessing.feature_engineering import (
     add_time_features,
     build_movie_genre_weights,
+    build_tag_features,
     build_tag_tfidf_features,
     encode_genres,
     filter_tags_to_training_window,
 )
-from src.preprocessing.user_profiles import build_user_genre_profiles, create_user_profiles
+from src.preprocessing.user_profiles import build_user_genre_profiles, build_user_tag_profiles, create_user_profiles
 from src.storage.database import save_to_postgres
 from src.storage.save_parquet import append_metrics_history, save_metrics, save_parquet
 from src.utils.logging_utils import get_logger
@@ -90,7 +98,22 @@ def _build_tag_tfidf_if_available(
     return movie_tag_tfidf_df.cache(), user_tag_tfidf_df.cache()
 
 
-def _tune_hybrid_weights(
+def _build_tag_profiles_if_available(
+    use_tags: bool,
+    tags_df: DataFrame,
+) -> tuple[DataFrame | None, DataFrame | None]:
+    if not use_tags or _is_empty(tags_df):
+        return None, None
+    movie_tag_features_df = build_tag_features(tags_df).cache()
+    user_tag_profiles_df = build_user_tag_profiles(tags_df).cache()
+    return movie_tag_features_df, user_tag_profiles_df
+
+
+def _resolve_candidate_k(cfg: PipelineSettings) -> int:
+    return max(cfg.hybrid.top_k * cfg.hybrid.candidate_multiplier, cfg.hybrid.top_k)
+
+
+def _tune_hybrid_parameters(
     cfg: PipelineSettings,
     als_model_train,
     val_df: DataFrame,
@@ -99,17 +122,30 @@ def _tune_hybrid_weights(
     movie_genre_weights_df: DataFrame,
     movie_tag_tfidf_train_df: DataFrame | None,
     user_tag_tfidf_train_df: DataFrame | None,
+    movie_tag_features_train_df: DataFrame | None,
+    user_tag_profiles_train_df: DataFrame | None,
 ) -> Dict[str, float]:
-    weight_candidates = [0.5, 0.6, 0.7, 0.8, 0.9]
+    candidate_k = _resolve_candidate_k(cfg)
     val_users_df = val_df.select("userId").distinct().cache()
 
-    als_val_candidates_df = recommend_for_users_flat(als_model_train, val_users_df, 50).select("userId", "movieId").cache()
-    content_val_candidates_df = (
+    als_val_candidates_df = recommend_for_users_flat(als_model_train, val_users_df, candidate_k).select("userId", "movieId").cache()
+    genre_val_candidates_df = (
         generate_content_candidates(
             user_genre_profiles_df=user_genre_profiles_train_df,
             movie_genre_weights_df=movie_genre_weights_df,
             seen_interactions_df=seen_train_df,
-            k=50,
+            k=candidate_k,
+        )
+        .select("userId", "movieId")
+        .join(val_users_df, on="userId", how="inner")
+        .cache()
+    )
+    tag_val_candidates_df = (
+        generate_tag_candidates(
+            user_tag_profiles_df=user_tag_profiles_train_df,
+            movie_tag_features_df=movie_tag_features_train_df,
+            seen_interactions_df=seen_train_df,
+            k=candidate_k,
         )
         .select("userId", "movieId")
         .join(val_users_df, on="userId", how="inner")
@@ -117,7 +153,8 @@ def _tune_hybrid_weights(
     )
 
     merged_val_candidates_df = (
-        als_val_candidates_df.unionByName(content_val_candidates_df)
+        als_val_candidates_df.unionByName(genre_val_candidates_df)
+        .unionByName(tag_val_candidates_df)
         .dropDuplicates(["userId", "movieId"])
     )
     merged_val_candidates_df = _exclude_seen_interactions(merged_val_candidates_df, seen_train_df).cache()
@@ -131,10 +168,13 @@ def _tune_hybrid_weights(
         }
 
     als_val_scores_df = score_als_candidates(als_model_train, merged_val_candidates_df).cache()
-    content_val_scores_df = build_content_scores(
+    genre_val_scores_df = score_content_candidates(
         candidate_items_df=merged_val_candidates_df,
         user_genre_profiles_df=user_genre_profiles_train_df,
         movie_genre_weights_df=movie_genre_weights_df,
+    ).cache()
+    tag_val_scores_df = score_tag_candidates(
+        candidate_items_df=merged_val_candidates_df,
         user_tag_tfidf_df=user_tag_tfidf_train_df,
         movie_tag_tfidf_df=movie_tag_tfidf_train_df,
     ).cache()
@@ -142,44 +182,54 @@ def _tune_hybrid_weights(
     best_choice = {
         "als_weight": float(cfg.hybrid.als_weight),
         "content_weight": float(cfg.hybrid.content_weight),
+        "tag_weight": 0.2,
         "val_precision": -1.0,
         "val_ndcg": -1.0,
     }
 
-    for als_weight in weight_candidates:
-        content_weight = 1.0 - als_weight
-        hybrid_val_df = combine_hybrid_scores(
-            als_scores_df=als_val_scores_df,
-            content_scores_df=content_val_scores_df,
-            settings=cfg,
-            als_weight=als_weight,
-            content_weight=content_weight,
-        )
-        top_val_df = select_top_k_recommendations(hybrid_val_df, cfg.hybrid.top_k)
+    for tag_weight in cfg.hybrid.tag_weight_candidates:
+        content_val_scores_df = combine_content_components(
+            candidate_items_df=merged_val_candidates_df,
+            genre_scores_df=genre_val_scores_df,
+            tag_scores_df=tag_val_scores_df,
+            tag_weight=tag_weight,
+        ).cache()
 
-        precision_val = compute_precision_at_k(
-            recommendations_df=top_val_df.select("userId", "movieId", "rank", "final_score"),
-            ground_truth_df=val_df,
-            k=cfg.hybrid.top_k,
-            positive_threshold=cfg.min_positive_rating,
-        )
-        ndcg_val = compute_ndcg_at_k(
-            recommendations_df=top_val_df.select("userId", "movieId", "rank", "final_score"),
-            ground_truth_df=val_df,
-            k=cfg.hybrid.top_k,
-            positive_threshold=cfg.min_positive_rating,
-        )
+        for als_weight in cfg.hybrid.hybrid_weight_candidates:
+            content_weight = 1.0 - als_weight
+            hybrid_val_df = combine_hybrid_scores(
+                als_scores_df=als_val_scores_df,
+                content_scores_df=content_val_scores_df,
+                settings=cfg,
+                als_weight=als_weight,
+                content_weight=content_weight,
+            )
+            top_val_df = select_top_k_recommendations(hybrid_val_df, cfg.hybrid.top_k)
 
-        is_better = (ndcg_val > best_choice["val_ndcg"]) or (
-            ndcg_val == best_choice["val_ndcg"] and precision_val > best_choice["val_precision"]
-        )
-        if is_better:
-            best_choice = {
-                "als_weight": float(als_weight),
-                "content_weight": float(content_weight),
-                "val_precision": float(precision_val),
-                "val_ndcg": float(ndcg_val),
-            }
+            precision_val = compute_precision_at_k(
+                recommendations_df=top_val_df.select("userId", "movieId", "rank", "final_score"),
+                ground_truth_df=val_df,
+                k=cfg.hybrid.top_k,
+                positive_threshold=cfg.min_positive_rating,
+            )
+            ndcg_val = compute_ndcg_at_k(
+                recommendations_df=top_val_df.select("userId", "movieId", "rank", "final_score"),
+                ground_truth_df=val_df,
+                k=cfg.hybrid.top_k,
+                positive_threshold=cfg.min_positive_rating,
+            )
+
+            is_better = (ndcg_val > best_choice["val_ndcg"]) or (
+                ndcg_val == best_choice["val_ndcg"] and precision_val > best_choice["val_precision"]
+            )
+            if is_better:
+                best_choice = {
+                    "als_weight": float(als_weight),
+                    "content_weight": float(content_weight),
+                    "tag_weight": float(tag_weight),
+                    "val_precision": float(precision_val),
+                    "val_ndcg": float(ndcg_val),
+                }
 
     return best_choice
 
@@ -268,6 +318,7 @@ def run_pipeline(
     user_profiles_df = create_user_profiles(ratings_features).cache()
     movie_genres_df = encode_genres(movies_clean).cache()
     movie_genre_weights_df = build_movie_genre_weights(movie_genres_df).cache()
+    candidate_k = _resolve_candidate_k(cfg)
 
     train_df, val_df, test_df = time_based_split(ratings_features, settings=cfg)
     train_df = train_df.cache()
@@ -280,8 +331,9 @@ def run_pipeline(
     seen_train_df = train_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).cache()
     tags_train_df = filter_tags_to_training_window(tags_clean, train_df).cache()
     movie_tag_tfidf_train_df, user_tag_tfidf_train_df = _build_tag_tfidf_if_available(use_tags, tags_train_df)
+    movie_tag_features_train_df, user_tag_profiles_train_df = _build_tag_profiles_if_available(use_tags, tags_train_df)
 
-    best_hybrid = _tune_hybrid_weights(
+    best_hybrid = _tune_hybrid_parameters(
         cfg=cfg,
         als_model_train=als_model_train,
         val_df=val_df,
@@ -290,6 +342,8 @@ def run_pipeline(
         movie_genre_weights_df=movie_genre_weights_df,
         movie_tag_tfidf_train_df=movie_tag_tfidf_train_df,
         user_tag_tfidf_train_df=user_tag_tfidf_train_df,
+        movie_tag_features_train_df=movie_tag_features_train_df,
+        user_tag_profiles_train_df=user_tag_profiles_train_df,
     )
 
     als_model = retrain_best_als(train_df, val_df, best_als_params, settings=cfg)
@@ -311,21 +365,33 @@ def run_pipeline(
     user_genre_profiles_final_df = build_user_genre_profiles(train_val_df, movie_genres_df).cache()
     tags_train_val_df = filter_tags_to_training_window(tags_clean, train_val_df).cache()
     movie_tag_tfidf_final_df, user_tag_tfidf_final_df = _build_tag_tfidf_if_available(use_tags, tags_train_val_df)
+    movie_tag_features_final_df, user_tag_profiles_final_df = _build_tag_profiles_if_available(use_tags, tags_train_val_df)
 
-    als_candidates_df = recommend_for_all_users_flat(als_model, 50).select("userId", "movieId").cache()
-    content_candidates_df = (
+    als_candidates_df = recommend_for_all_users_flat(als_model, candidate_k).select("userId", "movieId").cache()
+    genre_candidates_df = (
         generate_content_candidates(
             user_genre_profiles_df=user_genre_profiles_final_df,
             movie_genre_weights_df=movie_genre_weights_df,
             seen_interactions_df=seen_interactions_df,
-            k=50,
+            k=candidate_k,
+        )
+        .select("userId", "movieId")
+        .cache()
+    )
+    tag_candidates_df = (
+        generate_tag_candidates(
+            user_tag_profiles_df=user_tag_profiles_final_df,
+            movie_tag_features_df=movie_tag_features_final_df,
+            seen_interactions_df=seen_interactions_df,
+            k=candidate_k,
         )
         .select("userId", "movieId")
         .cache()
     )
 
     merged_candidates_df = (
-        als_candidates_df.unionByName(content_candidates_df)
+        als_candidates_df.unionByName(genre_candidates_df)
+        .unionByName(tag_candidates_df)
         .dropDuplicates(["userId", "movieId"])
     )
     merged_candidates_df = _exclude_seen_interactions(merged_candidates_df, seen_interactions_df).cache()
@@ -336,6 +402,9 @@ def run_pipeline(
         movie_genre_weights_df=movie_genre_weights_df,
         user_tag_tfidf_df=user_tag_tfidf_final_df,
         movie_tag_tfidf_df=movie_tag_tfidf_final_df,
+        user_tag_profiles_df=user_tag_profiles_final_df,
+        movie_tag_features_df=movie_tag_features_final_df,
+        tag_weight=best_hybrid["tag_weight"],
     ).cache()
 
     als_scores_df = score_als_candidates(als_model, merged_candidates_df).cache()
@@ -400,6 +469,7 @@ def run_pipeline(
         f"ndcg_at_{cfg.hybrid.top_k}": float(ndcg_k),
         "hybrid_als_weight": float(best_hybrid["als_weight"]),
         "hybrid_content_weight": float(best_hybrid["content_weight"]),
+        "content_tag_weight": float(best_hybrid["tag_weight"]),
         "val_precision_at_k": float(best_hybrid["val_precision"]),
         "val_ndcg_at_k": float(best_hybrid["val_ndcg"]),
         "als_rank": float(best_als_params["rank"]),

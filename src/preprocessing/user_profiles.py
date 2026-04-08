@@ -30,15 +30,20 @@ def build_user_genre_profiles(
 
     aggregated = scored.groupBy("userId", "genre").agg(
         F.avg("genre_signal").alias("avg_genre_signal"),
+        F.sum("genre_signal").alias("total_genre_signal"),
         F.count("*").alias("genre_events"),
     )
 
     normalization_window = Window.partitionBy("userId")
     normalized = (
-        aggregated.withColumn("signal_sum", F.sum("avg_genre_signal").over(normalization_window))
+        aggregated.withColumn(
+            "genre_strength",
+            F.col("total_genre_signal") * F.log1p(F.col("genre_events")),
+        )
+        .withColumn("signal_sum", F.sum("genre_strength").over(normalization_window))
         .withColumn(
             "genre_weight",
-            F.when(F.col("signal_sum") > F.lit(0.0), F.col("avg_genre_signal") / F.col("signal_sum")).otherwise(F.lit(0.0)),
+            F.when(F.col("signal_sum") > F.lit(0.0), F.col("genre_strength") / F.col("signal_sum")).otherwise(F.lit(0.0)),
         )
         .drop("signal_sum")
     )
@@ -52,9 +57,10 @@ def build_user_tag_profiles(tags_df: DataFrame, min_tag_count: int = 2) -> DataF
 
     normalization_window = Window.partitionBy("userId")
     weighted = (
-        filtered.withColumn("user_tag_total", F.sum("tag_count").over(normalization_window))
-        .withColumn("user_tag_weight", F.col("tag_count") / F.col("user_tag_total"))
-        .drop("user_tag_total")
+        filtered.withColumn("tag_strength", F.log1p(F.col("tag_count")))
+        .withColumn("user_tag_total", F.sum("tag_strength").over(normalization_window))
+        .withColumn("user_tag_weight", F.col("tag_strength") / F.col("user_tag_total"))
+        .drop("tag_strength", "user_tag_total")
     )
     LOGGER.info("Built user tag profiles")
     return weighted

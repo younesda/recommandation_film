@@ -22,6 +22,7 @@ pytest-cache-files*/
 
 # Runtime outputs
 data/processed/
+recommandation_film_colab_export/
 spark-warehouse/
 metastore_db/
 derby.log

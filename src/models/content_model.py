@@ -138,7 +138,34 @@ def build_content_scores(
             F.lit(0.0),
         )
 
-    combined = genre_scores.join(tag_scores, on=["userId", "movieId"], how="left").fillna({"content_tag_score": 0.0})
+    return combine_content_components(
+        candidate_items_df=candidate_items_df,
+        genre_scores_df=genre_scores,
+        tag_scores_df=tag_scores,
+        tag_weight=tag_weight,
+    )
+
+
+def combine_content_components(
+    candidate_items_df: DataFrame,
+    genre_scores_df: DataFrame,
+    tag_scores_df: DataFrame,
+    tag_weight: float = 0.2,
+) -> DataFrame:
+    base_candidates = candidate_items_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"])
+    combined = (
+        base_candidates.join(
+            genre_scores_df.select("userId", "movieId", "content_genre_score", "matched_genres"),
+            on=["userId", "movieId"],
+            how="left",
+        )
+        .join(
+            tag_scores_df.select("userId", "movieId", "content_tag_score"),
+            on=["userId", "movieId"],
+            how="left",
+        )
+        .fillna({"content_genre_score": 0.0, "content_tag_score": 0.0})
+    )
     combined = combined.withColumn(
         "content_score",
         (F.lit(1.0 - tag_weight) * F.col("content_genre_score")) + (F.lit(tag_weight) * F.col("content_tag_score")),
@@ -173,3 +200,38 @@ def generate_content_candidates(
     ranking_window = Window.partitionBy("userId").orderBy(F.col("content_score").desc(), F.col("movieId").asc())
     ranked = unseen.withColumn("content_rank", F.row_number().over(ranking_window)).filter(F.col("content_rank") <= F.lit(k))
     return ranked.select("userId", "movieId", "content_score", "matched_genres")
+
+
+def generate_tag_candidates(
+    user_tag_profiles_df: DataFrame | None,
+    movie_tag_features_df: DataFrame | None,
+    seen_interactions_df: DataFrame,
+    k: int = 50,
+) -> DataFrame:
+    if user_tag_profiles_df is None or movie_tag_features_df is None:
+        return seen_interactions_df.sparkSession.createDataFrame([], "userId int, movieId int, content_tag_score double")
+
+    positive_user_tags = user_tag_profiles_df.filter(F.col("user_tag_weight") > F.lit(0.0)).select(
+        "userId",
+        "tag",
+        "user_tag_weight",
+    )
+
+    scored = positive_user_tags.join(
+        movie_tag_features_df.select("movieId", "tag", "movie_tag_weight"),
+        on="tag",
+        how="inner",
+    )
+    aggregated = scored.groupBy("userId", "movieId").agg(
+        F.sum(F.col("user_tag_weight") * F.col("movie_tag_weight")).alias("content_tag_score")
+    )
+
+    unseen = aggregated.join(
+        seen_interactions_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]),
+        on=["userId", "movieId"],
+        how="left_anti",
+    )
+
+    ranking_window = Window.partitionBy("userId").orderBy(F.col("content_tag_score").desc(), F.col("movieId").asc())
+    ranked = unseen.withColumn("tag_rank", F.row_number().over(ranking_window)).filter(F.col("tag_rank") <= F.lit(k))
+    return ranked.select("userId", "movieId", "content_tag_score")

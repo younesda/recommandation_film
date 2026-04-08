@@ -56,9 +56,10 @@ def build_tag_features(tags_df: DataFrame, min_tag_count: int = 5) -> DataFrame:
 
     tag_total_window = Window.partitionBy("movieId")
     normalized = (
-        movie_tag_counts.withColumn("movie_tag_total", F.sum("tag_count").over(tag_total_window))
-        .withColumn("movie_tag_weight", F.col("tag_count") / F.col("movie_tag_total"))
-        .drop("movie_tag_total")
+        movie_tag_counts.withColumn("tag_strength", F.log1p(F.col("tag_count")))
+        .withColumn("movie_tag_total", F.sum("tag_strength").over(tag_total_window))
+        .withColumn("movie_tag_weight", F.col("tag_strength") / F.col("movie_tag_total"))
+        .drop("tag_strength", "movie_tag_total")
     )
     LOGGER.info("Built tag features")
     return normalized
