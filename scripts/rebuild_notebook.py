@@ -293,6 +293,7 @@ def build_notebook() -> dict:
                 hybrid=HybridSettings(
                     top_k=TOP_K,
                     candidate_multiplier=profile["candidate_multiplier"],
+                    als_candidate_overfetch_multiplier=3,
                 ),
                 als=ALSSettings(
                     rank_candidates=profile["als_rank_candidates"],
@@ -321,6 +322,7 @@ def build_notebook() -> dict:
                     {"parameter": "output_base", "value": settings.data_paths.output_base},
                     {"parameter": "top_k", "value": settings.hybrid.top_k},
                     {"parameter": "candidate_multiplier", "value": settings.hybrid.candidate_multiplier},
+                    {"parameter": "als_candidate_overfetch_multiplier", "value": settings.hybrid.als_candidate_overfetch_multiplier},
                     {"parameter": "hybrid_weight_candidates", "value": settings.hybrid.hybrid_weight_candidates},
                     {"parameter": "tag_weight_candidates", "value": settings.hybrid.tag_weight_candidates},
                     {"parameter": "als_rank_candidates", "value": settings.als.rank_candidates},
@@ -523,9 +525,12 @@ def build_notebook() -> dict:
                 "precision_at_10",
                 "recall_at_10",
                 "ndcg_at_10",
-                "hybrid_als_weight",
-                "hybrid_content_weight",
                 "content_tag_weight",
+                "val_candidate_recall",
+                "test_candidate_recall",
+                "ranking_als_val_candidate_recall",
+                "ranker_val_ndcg_at_k",
+                "ranking_als_alpha",
             ]
             display(metrics_df[metrics_df["metric"].isin(priority_metrics)].reset_index(drop=True))
             """,

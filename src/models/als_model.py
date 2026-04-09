@@ -131,9 +131,12 @@ def train_ranking_als_with_tuning(
     val_users_df = val_df.select("userId").distinct().cache()
     seen_train_df = train_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).cache()
     ranking_window = Window.partitionBy("userId").orderBy(F.col("als_score").desc(), F.col("movieId").asc())
+    candidate_k = max(cfg.hybrid.top_k * cfg.hybrid.candidate_multiplier, cfg.hybrid.top_k)
+    als_request_k = max(candidate_k * cfg.hybrid.als_candidate_overfetch_multiplier, candidate_k)
 
     best_model: ALSModel | None = None
     best_params: Dict[str, float] = {}
+    best_candidate_recall = -1.0
     best_ndcg = -1.0
     best_precision = -1.0
 
@@ -143,11 +146,11 @@ def train_ranking_als_with_tuning(
             for alpha in cfg.als.ranking_alpha_candidates:
                 for max_iter in cfg.als.ranking_max_iter_candidates:
                     model = _build_ranking_als(rank, reg_param, alpha, max_iter, cfg.als.seed).fit(implicit_train_df)
-                    recommendations = recommend_for_users_flat(model, val_users_df, cfg.hybrid.top_k)
+                    recommendations = recommend_for_users_flat(model, val_users_df, als_request_k)
                     recommendations = recommendations.join(seen_train_df, on=["userId", "movieId"], how="left_anti")
                     recommendations = (
                         recommendations.withColumn("rank", F.row_number().over(ranking_window))
-                        .filter(F.col("rank") <= F.lit(cfg.hybrid.top_k))
+                        .filter(F.col("rank") <= F.lit(candidate_k))
                         .cache()
                     )
 
@@ -161,8 +164,21 @@ def train_ranking_als_with_tuning(
                         )
                         continue
 
-                    precision_val = compute_precision_at_k(
+                    top_k_recommendations = recommendations.filter(F.col("rank") <= F.lit(cfg.hybrid.top_k)).cache()
+
+                    candidate_recall_val = compute_recall_at_k(
                         recommendations_df=recommendations.select(
+                            "userId",
+                            "movieId",
+                            "rank",
+                            F.col("als_score").alias("final_score"),
+                        ),
+                        ground_truth_df=val_df,
+                        k=candidate_k,
+                        positive_threshold=cfg.min_positive_rating,
+                    )
+                    precision_val = compute_precision_at_k(
+                        recommendations_df=top_k_recommendations.select(
                             "userId",
                             "movieId",
                             "rank",
@@ -173,7 +189,7 @@ def train_ranking_als_with_tuning(
                         positive_threshold=cfg.min_positive_rating,
                     )
                     recall_val = compute_recall_at_k(
-                        recommendations_df=recommendations.select(
+                        recommendations_df=top_k_recommendations.select(
                             "userId",
                             "movieId",
                             "rank",
@@ -184,7 +200,7 @@ def train_ranking_als_with_tuning(
                         positive_threshold=cfg.min_positive_rating,
                     )
                     ndcg_val = compute_ndcg_at_k(
-                        recommendations_df=recommendations.select(
+                        recommendations_df=top_k_recommendations.select(
                             "userId",
                             "movieId",
                             "rank",
@@ -196,18 +212,28 @@ def train_ranking_als_with_tuning(
                     )
 
                     LOGGER.info(
-                        "Implicit ALS candidate rank=%s regParam=%s alpha=%s maxIter=%s precision=%.6f recall=%.6f ndcg=%.6f",
+                        "Implicit ALS candidate rank=%s regParam=%s alpha=%s maxIter=%s candidate_recall=%.6f precision=%.6f recall=%.6f ndcg=%.6f",
                         rank,
                         reg_param,
                         alpha,
                         max_iter,
+                        candidate_recall_val,
                         precision_val,
                         recall_val,
                         ndcg_val,
                     )
 
-                    is_better = (ndcg_val > best_ndcg) or (ndcg_val == best_ndcg and precision_val > best_precision)
+                    is_better = (
+                        candidate_recall_val > best_candidate_recall
+                        or (
+                            candidate_recall_val == best_candidate_recall
+                            and (
+                                ndcg_val > best_ndcg or (ndcg_val == best_ndcg and precision_val > best_precision)
+                            )
+                        )
+                    )
                     if is_better:
+                        best_candidate_recall = float(candidate_recall_val)
                         best_ndcg = float(ndcg_val)
                         best_precision = float(precision_val)
                         best_model = model
@@ -216,6 +242,7 @@ def train_ranking_als_with_tuning(
                             "regParam": float(reg_param),
                             "alpha": float(alpha),
                             "maxIter": float(max_iter),
+                            "val_candidate_recall": float(candidate_recall_val),
                             "val_precision": float(precision_val),
                             "val_recall": float(recall_val),
                             "val_ndcg": float(ndcg_val),

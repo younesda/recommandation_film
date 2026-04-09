@@ -29,6 +29,7 @@ class HybridSettings:
     content_weight: float = 0.3
     top_k: int = 10
     candidate_multiplier: int = 40
+    als_candidate_overfetch_multiplier: int = 3
     hybrid_weight_candidates: List[float] = field(default_factory=lambda: [0.2, 0.35, 0.5, 0.65, 0.8, 0.9])
     tag_weight_candidates: List[float] = field(default_factory=lambda: [0.0, 0.1, 0.2, 0.3])
 

@@ -6,6 +6,7 @@ from typing import Dict
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 from src.config.settings import PipelineSettings
 from src.evaluation.mae import compute_mae
@@ -124,10 +125,24 @@ def _resolve_candidate_k(cfg: PipelineSettings) -> int:
     return max(cfg.hybrid.top_k * cfg.hybrid.candidate_multiplier, cfg.hybrid.top_k)
 
 
+def _resolve_als_request_k(cfg: PipelineSettings, candidate_k: int) -> int:
+    return max(candidate_k * cfg.hybrid.als_candidate_overfetch_multiplier, candidate_k)
+
+
 def _zero_source_candidates(candidate_df: DataFrame) -> DataFrame:
     return candidate_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]).select(
         "userId",
         "movieId",
+        F.lit(0.0).alias("als_candidate_score"),
+        F.lit(0.0).alias("content_candidate_score"),
+        F.lit(0.0).alias("tag_candidate_score"),
+        F.lit(0.0).alias("popular_candidate_score"),
+        F.lit(0.0).alias("recent_candidate_score"),
+        F.lit(None).cast("int").alias("als_candidate_rank"),
+        F.lit(None).cast("int").alias("content_candidate_rank"),
+        F.lit(None).cast("int").alias("tag_candidate_rank"),
+        F.lit(None).cast("int").alias("popular_candidate_rank"),
+        F.lit(None).cast("int").alias("recent_candidate_rank"),
         F.lit(0).alias("source_als_candidate"),
         F.lit(0).alias("source_content_candidate"),
         F.lit(0).alias("source_tag_candidate"),
@@ -153,6 +168,16 @@ def _add_oracle_positives_to_candidates(
     return (
         merged.groupBy("userId", "movieId")
         .agg(
+            F.max("als_candidate_score").alias("als_candidate_score"),
+            F.max("content_candidate_score").alias("content_candidate_score"),
+            F.max("tag_candidate_score").alias("tag_candidate_score"),
+            F.max("popular_candidate_score").alias("popular_candidate_score"),
+            F.max("recent_candidate_score").alias("recent_candidate_score"),
+            F.min("als_candidate_rank").alias("als_candidate_rank"),
+            F.min("content_candidate_rank").alias("content_candidate_rank"),
+            F.min("tag_candidate_rank").alias("tag_candidate_rank"),
+            F.min("popular_candidate_rank").alias("popular_candidate_rank"),
+            F.min("recent_candidate_rank").alias("recent_candidate_rank"),
             F.max("source_als_candidate").alias("source_als_candidate"),
             F.max("source_content_candidate").alias("source_content_candidate"),
             F.max("source_tag_candidate").alias("source_tag_candidate"),
@@ -210,13 +235,27 @@ def _build_multi_source_candidates(
     movie_tag_features_df: DataFrame | None,
     item_features_df: DataFrame,
     candidate_k: int,
+    settings: PipelineSettings,
 ) -> Dict[str, DataFrame]:
     user_genre_subset_df = user_genre_profiles_df.join(users_df, on="userId", how="inner").cache()
     user_tag_subset_df = None
     if user_tag_profiles_df is not None:
         user_tag_subset_df = user_tag_profiles_df.join(users_df, on="userId", how="inner").cache()
 
-    als_candidates_df = recommend_for_users_flat(ranking_als_model, users_df, candidate_k).select("userId", "movieId", "als_score").cache()
+    als_request_k = _resolve_als_request_k(settings, candidate_k)
+    als_ranking_window = Window.partitionBy("userId").orderBy(F.col("als_score").desc(), F.col("movieId").asc())
+    als_candidates_df = (
+        recommend_for_users_flat(ranking_als_model, users_df, als_request_k)
+        .join(
+            seen_interactions_df.select("userId", "movieId").dropDuplicates(["userId", "movieId"]),
+            on=["userId", "movieId"],
+            how="left_anti",
+        )
+        .withColumn("als_candidate_rank", F.row_number().over(als_ranking_window))
+        .filter(F.col("als_candidate_rank") <= F.lit(candidate_k))
+        .select("userId", "movieId", "als_score", "als_candidate_rank")
+        .cache()
+    )
     genre_candidates_df = generate_content_candidates(
         user_genre_profiles_df=user_genre_subset_df,
         movie_genre_weights_df=movie_genre_weights_df,
@@ -399,6 +438,7 @@ def run_pipeline(
         movie_tag_features_df=movie_tag_features_train_df,
         item_features_df=item_features_train_df,
         candidate_k=candidate_k,
+        settings=cfg,
     )
 
     val_candidate_recall = _compute_candidate_recall(
@@ -482,6 +522,7 @@ def run_pipeline(
         movie_tag_features_df=movie_tag_features_final_df,
         item_features_df=item_features_final_df,
         candidate_k=candidate_k,
+        settings=cfg,
     )
 
     test_candidate_recall = _compute_candidate_recall(
@@ -564,6 +605,12 @@ def run_pipeline(
         "content_genre_score",
         "content_tag_score",
         "final_score",
+        "candidate_source_count",
+        "als_candidate_score",
+        "content_candidate_score",
+        "tag_candidate_score",
+        "popular_candidate_score",
+        "recent_candidate_score",
         "source_als_candidate",
         "source_content_candidate",
         "source_tag_candidate",
@@ -607,6 +654,7 @@ def run_pipeline(
         "ranking_als_val_precision_at_k": float(best_ranking_als_params["val_precision"]),
         "ranking_als_val_recall_at_k": float(best_ranking_als_params["val_recall"]),
         "ranking_als_val_ndcg_at_k": float(best_ranking_als_params["val_ndcg"]),
+        "ranking_als_val_candidate_recall": float(best_ranking_als_params["val_candidate_recall"]),
         "als_rank": float(best_als_params["rank"]),
         "als_reg_param": float(best_als_params["regParam"]),
         "als_max_iter": float(best_als_params["maxIter"]),

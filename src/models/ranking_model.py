@@ -14,9 +14,14 @@ from src.config.settings import PipelineSettings, RankerSettings
 RANKER_FEATURE_COLUMNS = [
     "cf_score",
     "explicit_als_score",
+    "als_candidate_score",
     "content_score",
     "content_genre_score",
     "content_tag_score",
+    "content_candidate_score",
+    "tag_candidate_score",
+    "popular_candidate_score",
+    "recent_candidate_score",
     "item_interaction_count",
     "item_avg_rating",
     "item_positive_rate",
@@ -35,6 +40,13 @@ RANKER_FEATURE_COLUMNS = [
     "source_tag_candidate",
     "source_popular_candidate",
     "source_recent_candidate",
+    "als_candidate_rank_reciprocal",
+    "content_candidate_rank_reciprocal",
+    "tag_candidate_rank_reciprocal",
+    "popular_candidate_rank_reciprocal",
+    "recent_candidate_rank_reciprocal",
+    "best_candidate_rank_reciprocal",
+    "source_score_sum",
     "cf_x_content",
     "cf_x_popularity",
     "content_x_popularity",
@@ -49,6 +61,26 @@ def build_ranking_features(
     item_features_df: DataFrame,
     user_profiles_df: DataFrame,
 ) -> DataFrame:
+    candidate_selected = candidate_sources_df.select(
+        "userId",
+        "movieId",
+        "candidate_source_count",
+        "source_als_candidate",
+        "source_content_candidate",
+        "source_tag_candidate",
+        "source_popular_candidate",
+        "source_recent_candidate",
+        "als_candidate_score",
+        "content_candidate_score",
+        "tag_candidate_score",
+        "popular_candidate_score",
+        "recent_candidate_score",
+        "als_candidate_rank",
+        "content_candidate_rank",
+        "tag_candidate_rank",
+        "popular_candidate_rank",
+        "recent_candidate_rank",
+    )
     content_selected = content_scores_df.select(
         "userId",
         "movieId",
@@ -74,9 +106,10 @@ def build_ranking_features(
         "user_positive_rate",
         "user_rating_stddev",
     )
+    large_rank = F.lit(1_000_000.0)
 
     features = (
-        candidate_sources_df.join(
+        candidate_selected.join(
             collaborative_scores_df.select("userId", "movieId", F.col("als_score").alias("cf_score")),
             on=["userId", "movieId"],
             how="left",
@@ -93,9 +126,14 @@ def build_ranking_features(
             {
                 "cf_score": 0.0,
                 "explicit_als_score": 0.0,
+                "als_candidate_score": 0.0,
                 "content_score": 0.0,
                 "content_genre_score": 0.0,
                 "content_tag_score": 0.0,
+                "content_candidate_score": 0.0,
+                "tag_candidate_score": 0.0,
+                "popular_candidate_score": 0.0,
+                "recent_candidate_score": 0.0,
                 "item_interaction_count": 0.0,
                 "item_avg_rating": 0.0,
                 "item_positive_rate": 0.0,
@@ -112,6 +150,55 @@ def build_ranking_features(
         .withColumn(
             "matched_genre_count",
             F.when(F.col("matched_genres").isNull(), F.lit(0)).otherwise(F.size(F.col("matched_genres"))),
+        )
+        .withColumn(
+            "als_candidate_rank_reciprocal",
+            F.when(F.col("als_candidate_rank").isNull(), F.lit(0.0)).otherwise(F.lit(1.0) / F.col("als_candidate_rank")),
+        )
+        .withColumn(
+            "content_candidate_rank_reciprocal",
+            F.when(F.col("content_candidate_rank").isNull(), F.lit(0.0)).otherwise(F.lit(1.0) / F.col("content_candidate_rank")),
+        )
+        .withColumn(
+            "tag_candidate_rank_reciprocal",
+            F.when(F.col("tag_candidate_rank").isNull(), F.lit(0.0)).otherwise(F.lit(1.0) / F.col("tag_candidate_rank")),
+        )
+        .withColumn(
+            "popular_candidate_rank_reciprocal",
+            F.when(F.col("popular_candidate_rank").isNull(), F.lit(0.0)).otherwise(F.lit(1.0) / F.col("popular_candidate_rank")),
+        )
+        .withColumn(
+            "recent_candidate_rank_reciprocal",
+            F.when(F.col("recent_candidate_rank").isNull(), F.lit(0.0)).otherwise(F.lit(1.0) / F.col("recent_candidate_rank")),
+        )
+        .withColumn(
+            "best_candidate_rank_reciprocal",
+            F.when(
+                F.least(
+                    F.coalesce(F.col("als_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("content_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("tag_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("popular_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("recent_candidate_rank").cast("double"), large_rank),
+                )
+                < large_rank,
+                F.lit(1.0)
+                / F.least(
+                    F.coalesce(F.col("als_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("content_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("tag_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("popular_candidate_rank").cast("double"), large_rank),
+                    F.coalesce(F.col("recent_candidate_rank").cast("double"), large_rank),
+                ),
+            ).otherwise(F.lit(0.0)),
+        )
+        .withColumn(
+            "source_score_sum",
+            F.col("als_candidate_score")
+            + F.col("content_candidate_score")
+            + F.col("tag_candidate_score")
+            + F.col("popular_candidate_score")
+            + F.col("recent_candidate_score"),
         )
         .withColumn("cf_x_content", F.col("cf_score") * F.col("content_score"))
         .withColumn("cf_x_popularity", F.col("cf_score") * F.col("item_popularity_score"))

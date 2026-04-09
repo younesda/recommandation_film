@@ -199,7 +199,7 @@ def generate_content_candidates(
 
     ranking_window = Window.partitionBy("userId").orderBy(F.col("content_score").desc(), F.col("movieId").asc())
     ranked = unseen.withColumn("content_rank", F.row_number().over(ranking_window)).filter(F.col("content_rank") <= F.lit(k))
-    return ranked.select("userId", "movieId", "content_score", "matched_genres")
+    return ranked.select("userId", "movieId", "content_score", "content_rank", "matched_genres")
 
 
 def generate_tag_candidates(
@@ -234,4 +234,4 @@ def generate_tag_candidates(
 
     ranking_window = Window.partitionBy("userId").orderBy(F.col("content_tag_score").desc(), F.col("movieId").asc())
     ranked = unseen.withColumn("tag_rank", F.row_number().over(ranking_window)).filter(F.col("tag_rank") <= F.lit(k))
-    return ranked.select("userId", "movieId", "content_tag_score")
+    return ranked.select("userId", "movieId", "content_tag_score", "tag_rank")

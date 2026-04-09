@@ -83,7 +83,7 @@ def generate_popular_candidates(
     return (
         unseen.withColumn("popular_rank", F.row_number().over(ranking_window))
         .filter(F.col("popular_rank") <= F.lit(k))
-        .select("userId", "movieId", "popular_candidate_score")
+        .select("userId", "movieId", "popular_candidate_score", "popular_rank")
     )
 
 
@@ -133,7 +133,7 @@ def generate_recent_candidates(
     return (
         unseen.withColumn("recent_rank", F.row_number().over(ranking_window))
         .filter(F.col("recent_rank") <= F.lit(k))
-        .select("userId", "movieId", "recent_candidate_score")
+        .select("userId", "movieId", "recent_candidate_score", "recent_rank")
     )
 
 
@@ -144,15 +144,58 @@ def merge_candidate_sources(
     popular_candidates_df: DataFrame,
     recent_candidates_df: DataFrame,
 ) -> DataFrame:
-    def _flag(df: DataFrame, score_col: str, flag_col: str) -> DataFrame:
-        return df.select("userId", "movieId", F.col(score_col), F.lit(1).alias(flag_col))
+    def _flag(
+        df: DataFrame,
+        score_col: str,
+        rank_col: str,
+        projected_score_col: str,
+        projected_rank_col: str,
+        flag_col: str,
+    ) -> DataFrame:
+        projected_cols = [
+            "userId",
+            "movieId",
+            F.col(score_col).alias(projected_score_col),
+            F.lit(1).alias(flag_col),
+        ]
+        if rank_col in df.columns:
+            projected_cols.append(F.col(rank_col).alias(projected_rank_col))
+        return df.select(*projected_cols)
 
     flagged_sources = [
-        _flag(als_candidates_df, "als_score", "source_als_candidate"),
-        _flag(content_candidates_df, "content_score", "source_content_candidate"),
-        _flag(tag_candidates_df, "content_tag_score", "source_tag_candidate"),
-        _flag(popular_candidates_df, "popular_candidate_score", "source_popular_candidate"),
-        _flag(recent_candidates_df, "recent_candidate_score", "source_recent_candidate"),
+        _flag(als_candidates_df, "als_score", "als_candidate_rank", "als_candidate_score", "als_candidate_rank", "source_als_candidate"),
+        _flag(
+            content_candidates_df,
+            "content_score",
+            "content_rank",
+            "content_candidate_score",
+            "content_candidate_rank",
+            "source_content_candidate",
+        ),
+        _flag(
+            tag_candidates_df,
+            "content_tag_score",
+            "tag_rank",
+            "tag_candidate_score",
+            "tag_candidate_rank",
+            "source_tag_candidate",
+        ),
+        _flag(
+            popular_candidates_df,
+            "popular_candidate_score",
+            "popular_rank",
+            "popular_candidate_score",
+            "popular_candidate_rank",
+            "source_popular_candidate",
+        ),
+        _flag(
+            recent_candidates_df,
+            "recent_candidate_score",
+            "recent_rank",
+            "recent_candidate_score",
+            "recent_candidate_rank",
+            "source_recent_candidate",
+        ),
     ]
 
     base = flagged_sources[0]
@@ -162,6 +205,16 @@ def merge_candidate_sources(
     return (
         base.groupBy("userId", "movieId")
         .agg(
+            F.max("als_candidate_score").alias("als_candidate_score"),
+            F.max("content_candidate_score").alias("content_candidate_score"),
+            F.max("tag_candidate_score").alias("tag_candidate_score"),
+            F.max("popular_candidate_score").alias("popular_candidate_score"),
+            F.max("recent_candidate_score").alias("recent_candidate_score"),
+            F.min("als_candidate_rank").alias("als_candidate_rank"),
+            F.min("content_candidate_rank").alias("content_candidate_rank"),
+            F.min("tag_candidate_rank").alias("tag_candidate_rank"),
+            F.min("popular_candidate_rank").alias("popular_candidate_rank"),
+            F.min("recent_candidate_rank").alias("recent_candidate_rank"),
             F.max(F.coalesce(F.col("source_als_candidate"), F.lit(0))).alias("source_als_candidate"),
             F.max(F.coalesce(F.col("source_content_candidate"), F.lit(0))).alias("source_content_candidate"),
             F.max(F.coalesce(F.col("source_tag_candidate"), F.lit(0))).alias("source_tag_candidate"),
