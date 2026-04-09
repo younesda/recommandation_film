@@ -482,6 +482,7 @@ def run_pipeline(
         feature_df=ranking_train_feature_df,
         ground_truth_df=val_df,
         positive_threshold=cfg.min_positive_rating,
+        settings=cfg,
     ).cache()
     ranker_model, ranker_feature_cols, ranker_info = train_xgb_ranker(ranker_training_df, settings=cfg)
 
@@ -563,6 +564,7 @@ def run_pipeline(
         candidate_feature_df=final_feature_df,
         ranker_model=ranker_model,
         feature_cols=ranker_feature_cols,
+        settings=cfg,
     )
     ranked_candidates_df = (
         final_feature_df.join(ranker_scores_df, on=["userId", "movieId"], how="inner")

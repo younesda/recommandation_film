@@ -7,6 +7,7 @@ from typing import Any, Dict, Sequence
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 from src.config.settings import PipelineSettings, RankerSettings
 
@@ -212,7 +213,9 @@ def build_ranker_training_frame(
     feature_df: DataFrame,
     ground_truth_df: DataFrame,
     positive_threshold: float,
+    settings: PipelineSettings | None = None,
 ) -> DataFrame:
+    cfg = settings or PipelineSettings()
     label_df = (
         ground_truth_df.select("userId", "movieId", "rating")
         .withColumn(
@@ -240,7 +243,26 @@ def build_ranker_training_frame(
         .filter((F.col("max_label") > F.lit(0)) & (F.col("candidate_count") > F.lit(1)))
         .select("userId")
     )
-    return training_df.join(eligible_users_df, on="userId", how="inner")
+    eligible_training_df = training_df.join(eligible_users_df, on="userId", how="inner")
+    proxy_score = (
+        (F.lit(0.45) * F.coalesce(F.col("cf_score"), F.lit(0.0)))
+        + (F.lit(0.30) * F.coalesce(F.col("content_score"), F.lit(0.0)))
+        + (F.lit(0.15) * F.coalesce(F.col("item_popularity_score"), F.lit(0.0)))
+        + (F.lit(0.10) * F.coalesce(F.col("item_recent_score"), F.lit(0.0)))
+    )
+    rank_window = Window.partitionBy("userId").orderBy(
+        F.col("is_positive_label").desc(),
+        proxy_score.desc(),
+        F.col("movieId").asc(),
+    )
+    return (
+        eligible_training_df.withColumn("ranker_train_rank", F.row_number().over(rank_window))
+        .filter(
+            (F.col("is_positive_label") > F.lit(0))
+            | (F.col("ranker_train_rank") <= F.lit(cfg.ranker.max_training_candidates_per_user))
+        )
+        .drop("ranker_train_rank")
+    )
 
 
 def _frame_to_pandas(df: DataFrame, feature_cols: Sequence[str]) -> pd.DataFrame:
@@ -449,13 +471,33 @@ def score_candidates_with_ranker(
     candidate_feature_df: DataFrame,
     ranker_model: Any,
     feature_cols: Sequence[str],
+    settings: PipelineSettings | None = None,
 ) -> DataFrame:
+    cfg = settings or PipelineSettings()
     available_cols = [col for col in feature_cols if col in candidate_feature_df.columns]
-    candidate_pdf = candidate_feature_df.select("userId", "movieId", *available_cols).toPandas()
-    if candidate_pdf.empty:
+    selected_df = candidate_feature_df.select("userId", "movieId", *available_cols)
+    chunk_size = max(int(cfg.ranker.scoring_chunk_size), 1)
+
+    buffered_rows: list[dict[str, Any]] = []
+    prediction_chunks: list[pd.DataFrame] = []
+
+    for row in selected_df.toLocalIterator():
+        buffered_rows.append(row.asDict(recursive=True))
+        if len(buffered_rows) < chunk_size:
+            continue
+
+        chunk_pdf = pd.DataFrame(buffered_rows)
+        chunk_pdf["final_score"] = ranker_model.predict(chunk_pdf[available_cols].copy())
+        prediction_chunks.append(chunk_pdf[["userId", "movieId", "final_score"]])
+        buffered_rows = []
+
+    if buffered_rows:
+        chunk_pdf = pd.DataFrame(buffered_rows)
+        chunk_pdf["final_score"] = ranker_model.predict(chunk_pdf[available_cols].copy())
+        prediction_chunks.append(chunk_pdf[["userId", "movieId", "final_score"]])
+
+    if not prediction_chunks:
         return spark.createDataFrame([], "userId int, movieId int, final_score double")
 
-    score_input = candidate_pdf[available_cols].copy()
-    candidate_pdf["final_score"] = ranker_model.predict(score_input)
-    predictions_pdf = candidate_pdf[["userId", "movieId", "final_score"]]
+    predictions_pdf = pd.concat(prediction_chunks, ignore_index=True)
     return spark.createDataFrame(predictions_pdf)

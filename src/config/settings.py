@@ -38,6 +38,8 @@ class HybridSettings:
 class RankerSettings:
     holdout_user_modulo: int = 5
     min_training_groups: int = 25
+    max_training_candidates_per_user: int = 200
+    scoring_chunk_size: int = 25000
     n_estimators_candidates: List[int] = field(default_factory=lambda: [150, 250])
     max_depth_candidates: List[int] = field(default_factory=lambda: [4, 6])
     learning_rate_candidates: List[float] = field(default_factory=lambda: [0.05, 0.1])
