@@ -46,6 +46,7 @@ def build_notebook() -> dict:
             Ce notebook est proprement regenerable et executable de bout en bout sur Colab.
             Il couvre:
             - le setup Colab
+            - le choix d'un profil d'execution `fast`, `balanced` ou `full`
             - une EDA rapide sur MovieLens
             - l'execution complete du pipeline
             - la verification des artefacts
@@ -150,7 +151,7 @@ def build_notebook() -> dict:
             from pyspark.sql import functions as F
 
             from src.api.main import APP
-            from src.config.settings import ALSSettings, DataPaths, HybridSettings, PipelineSettings
+            from src.config.settings import ALSSettings, DataPaths, HybridSettings, PipelineSettings, RankerSettings
             from src.ingestion.load_data import load_all_data
             from src.pipelines.training_pipeline import run_pipeline
             from src.preprocessing.clean_data import clean_movies, clean_ratings, clean_tags, time_based_split
@@ -178,11 +179,94 @@ def build_notebook() -> dict:
 
     cells.append(
         _markdown(
+            "md-profile",
+            """
+            ## 2) Choix du profil d'execution
+
+            Utilise `fast` pour iterer vite, `balanced` pour Colab au quotidien, et `full` seulement si tu acceptes un run long.
+            """,
+        )
+    )
+    cells.append(
+        _code(
+            "code-profile",
+            """
+            RUN_PROFILE = "balanced"
+
+            PROFILE_CONFIGS = {
+                "fast": {
+                    "description": "Iteration rapide pour valider l'environnement et obtenir un premier score ranking",
+                    "expected_runtime": "15-30 min",
+                    "candidate_multiplier": 15,
+                    "als_rank_candidates": [48],
+                    "als_reg_param_candidates": [0.08],
+                    "als_max_iter_candidates": [10],
+                    "ranking_rank_candidates": [64],
+                    "ranking_reg_param_candidates": [0.05],
+                    "ranking_alpha_candidates": [10.0],
+                    "ranking_max_iter_candidates": [10],
+                    "ranker_n_estimators_candidates": [120],
+                    "ranker_max_depth_candidates": [4],
+                    "ranker_learning_rate_candidates": [0.08],
+                    "ranker_min_child_weight_candidates": [1.0],
+                },
+                "balanced": {
+                    "description": "Meilleur compromis qualite / temps pour Colab",
+                    "expected_runtime": "35-70 min",
+                    "candidate_multiplier": 20,
+                    "als_rank_candidates": [48, 64],
+                    "als_reg_param_candidates": [0.05, 0.1],
+                    "als_max_iter_candidates": [10],
+                    "ranking_rank_candidates": [64],
+                    "ranking_reg_param_candidates": [0.03, 0.05],
+                    "ranking_alpha_candidates": [10.0, 20.0],
+                    "ranking_max_iter_candidates": [10],
+                    "ranker_n_estimators_candidates": [150],
+                    "ranker_max_depth_candidates": [4, 6],
+                    "ranker_learning_rate_candidates": [0.05],
+                    "ranker_min_child_weight_candidates": [1.0],
+                },
+                "full": {
+                    "description": "Recherche plus exhaustive, utile seulement pour un run final long",
+                    "expected_runtime": "90-150+ min",
+                    "candidate_multiplier": 40,
+                    "als_rank_candidates": [32, 48, 64, 96],
+                    "als_reg_param_candidates": [0.03, 0.05, 0.08, 0.1, 0.12],
+                    "als_max_iter_candidates": [10, 15],
+                    "ranking_rank_candidates": [64, 96],
+                    "ranking_reg_param_candidates": [0.01, 0.05, 0.1],
+                    "ranking_alpha_candidates": [5.0, 10.0, 20.0],
+                    "ranking_max_iter_candidates": [10, 15],
+                    "ranker_n_estimators_candidates": [150, 250],
+                    "ranker_max_depth_candidates": [4, 6],
+                    "ranker_learning_rate_candidates": [0.05, 0.1],
+                    "ranker_min_child_weight_candidates": [1.0, 5.0],
+                },
+            }
+
+            if RUN_PROFILE not in PROFILE_CONFIGS:
+                raise ValueError(f"Unknown RUN_PROFILE={RUN_PROFILE}. Expected one of {list(PROFILE_CONFIGS)}")
+
+            profile = PROFILE_CONFIGS[RUN_PROFILE]
+            profile_df = pd.DataFrame(
+                [
+                    {"profile": name, **cfg}
+                    for name, cfg in PROFILE_CONFIGS.items()
+                ]
+            )
+            display(profile_df[["profile", "description", "expected_runtime", "candidate_multiplier"]])
+            print(f"Selected profile: {RUN_PROFILE}")
+            """,
+        )
+    )
+
+    cells.append(
+        _markdown(
             "md-params",
             """
-            ## 2) Parametres du run
+            ## 3) Parametres du run
 
-            Ajuste ici les chemins ou quelques hyperparametres globaux avant de lancer Spark.
+            Les hyperparametres sont derives du profil choisi ci-dessus. `balanced` est le meilleur defaut pratique sur Colab.
             """,
         )
     )
@@ -206,12 +290,31 @@ def build_notebook() -> dict:
                     tags=str(RAW_DIR / "tags.csv"),
                     output_base=str(PROCESSED_DIR),
                 ),
-                hybrid=HybridSettings(top_k=TOP_K),
-                als=ALSSettings(),
+                hybrid=HybridSettings(
+                    top_k=TOP_K,
+                    candidate_multiplier=profile["candidate_multiplier"],
+                ),
+                als=ALSSettings(
+                    rank_candidates=profile["als_rank_candidates"],
+                    reg_param_candidates=profile["als_reg_param_candidates"],
+                    max_iter_candidates=profile["als_max_iter_candidates"],
+                    ranking_rank_candidates=profile["ranking_rank_candidates"],
+                    ranking_reg_param_candidates=profile["ranking_reg_param_candidates"],
+                    ranking_alpha_candidates=profile["ranking_alpha_candidates"],
+                    ranking_max_iter_candidates=profile["ranking_max_iter_candidates"],
+                ),
+                ranker=RankerSettings(
+                    n_estimators_candidates=profile["ranker_n_estimators_candidates"],
+                    max_depth_candidates=profile["ranker_max_depth_candidates"],
+                    learning_rate_candidates=profile["ranker_learning_rate_candidates"],
+                    min_child_weight_candidates=profile["ranker_min_child_weight_candidates"],
+                ),
             )
 
             params_df = pd.DataFrame(
                 [
+                    {"parameter": "run_profile", "value": RUN_PROFILE},
+                    {"parameter": "expected_runtime", "value": profile["expected_runtime"]},
                     {"parameter": "ratings_path", "value": settings.data_paths.ratings},
                     {"parameter": "movies_path", "value": settings.data_paths.movies},
                     {"parameter": "tags_path", "value": settings.data_paths.tags},
@@ -223,6 +326,14 @@ def build_notebook() -> dict:
                     {"parameter": "als_rank_candidates", "value": settings.als.rank_candidates},
                     {"parameter": "als_reg_param_candidates", "value": settings.als.reg_param_candidates},
                     {"parameter": "als_max_iter_candidates", "value": settings.als.max_iter_candidates},
+                    {"parameter": "ranking_rank_candidates", "value": settings.als.ranking_rank_candidates},
+                    {"parameter": "ranking_reg_param_candidates", "value": settings.als.ranking_reg_param_candidates},
+                    {"parameter": "ranking_alpha_candidates", "value": settings.als.ranking_alpha_candidates},
+                    {"parameter": "ranking_max_iter_candidates", "value": settings.als.ranking_max_iter_candidates},
+                    {"parameter": "ranker_n_estimators_candidates", "value": settings.ranker.n_estimators_candidates},
+                    {"parameter": "ranker_max_depth_candidates", "value": settings.ranker.max_depth_candidates},
+                    {"parameter": "ranker_learning_rate_candidates", "value": settings.ranker.learning_rate_candidates},
+                    {"parameter": "ranker_min_child_weight_candidates", "value": settings.ranker.min_child_weight_candidates},
                 ]
             )
             display(params_df)
@@ -234,7 +345,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-spark",
             """
-            ## 3) Creation de la session Spark
+            ## 4) Creation de la session Spark
 
             Cette session est celle utilisee ensuite pour l'EDA et le pipeline.
             """,
@@ -255,7 +366,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-load",
             """
-            ## 4) Chargement des donnees brutes
+            ## 5) Chargement des donnees brutes
 
             On charge les CSV MovieLens, avec mise en cache en parquet si besoin.
             """,
@@ -287,7 +398,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-prep",
             """
-            ## 5) Pretraitement et vue globale
+            ## 6) Pretraitement et vue globale
 
             Ici on applique les nettoyages de base et on regarde la taille des splits train/val/test.
             """,
@@ -330,7 +441,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-eda",
             """
-            ## 6) EDA rapide
+            ## 7) EDA rapide
 
             Quelques graphiques simples pour voir la distribution des notes et les genres dominants.
             """,
@@ -377,9 +488,10 @@ def build_notebook() -> dict:
         _markdown(
             "md-pipeline",
             """
-            ## 7) Pipeline complet
+            ## 8) Pipeline complet
 
             Cette cellule lance l'equivalent de `python scripts/run_pipeline.py`.
+            Si Colab est lent, commence avec `RUN_PROFILE = "fast"` ou `RUN_PROFILE = "balanced"`.
             """,
         )
     )
@@ -387,6 +499,8 @@ def build_notebook() -> dict:
         _code(
             "code-pipeline",
             """
+            print(f"Running profile: {RUN_PROFILE} ({profile['expected_runtime']})")
+
             pipeline_result = run_pipeline(
                 spark=spark,
                 settings=settings,
@@ -422,7 +536,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-artifacts",
             """
-            ## 8) Verification des artefacts generes
+            ## 9) Verification des artefacts generes
 
             On relit les fichiers produits dans `data/processed`.
             """,
@@ -471,7 +585,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-api",
             """
-            ## 9) Test API dans le notebook
+            ## 10) Test API dans le notebook
 
             Ici on recharge l'API locale sur les artefacts generes puis on interroge quelques endpoints.
             """,
@@ -514,7 +628,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-export",
             """
-            ## 10) Export zip des resultats
+            ## 11) Export zip des resultats
 
             Cette cellule prepare un bundle facile a telecharger depuis Colab avec le notebook, le code, les dashboards et les artefacts.
             """,
@@ -556,7 +670,7 @@ def build_notebook() -> dict:
         _markdown(
             "md-cleanup",
             """
-            ## 11) Nettoyage
+            ## 12) Nettoyage
 
             Quand tu as fini, tu peux fermer proprement Spark avec la cellule suivante.
             """,
