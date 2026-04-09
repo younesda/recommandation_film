@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -191,7 +191,7 @@ def build_notebook() -> dict:
         _code(
             "code-profile",
             """
-            RUN_PROFILE = "balanced"
+            RUN_PROFILE = "full"
 
             PROFILE_CONFIGS = {
                 "fast": {
@@ -266,7 +266,7 @@ def build_notebook() -> dict:
             """
             ## 3) Parametres du run
 
-            Les hyperparametres sont derives du profil choisi ci-dessus. `balanced` est le meilleur defaut pratique sur Colab.
+            Les hyperparametres sont derives du profil choisi ci-dessus. `full` est maintenant le defaut pour maximiser le score, au prix d'un run plus long.
             """,
         )
     )
@@ -491,7 +491,7 @@ def build_notebook() -> dict:
             ## 8) Pipeline complet
 
             Cette cellule lance l'equivalent de `python scripts/run_pipeline.py`.
-            Si Colab est lent, commence avec `RUN_PROFILE = "fast"` ou `RUN_PROFILE = "balanced"`.
+            Si le run est trop long, repasse temporairement sur `RUN_PROFILE = "balanced"` ou `RUN_PROFILE = "fast"`.
             """,
         )
     )
@@ -713,3 +713,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
