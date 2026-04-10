@@ -74,11 +74,13 @@ def _load_metrics_history() -> list[Dict[str, Any]]:
 
 
 @APP.get("/health")
+@APP.head("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
 @APP.get("/")
+@APP.head("/")
 def root() -> Dict[str, Any]:
     return {
         "service": "MovieLens Hybrid Recommender API",
