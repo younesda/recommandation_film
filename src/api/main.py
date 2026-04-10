@@ -7,12 +7,20 @@ from typing import Any, Dict
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.utils.logging_utils import get_logger
 
 
 LOGGER = get_logger(__name__)
 APP = FastAPI(title="MovieLens Hybrid Recommender API", version="1.0.0")
+
+APP.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "HEAD", "POST"],
+    allow_headers=["*"],
+)
 
 
 def _default_recommendations_path() -> str:

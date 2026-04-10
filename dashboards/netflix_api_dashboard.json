@@ -1,13 +1,39 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
   "links": [
-    {"includeVars": true, "keepTime": true, "tags": [], "targetBlank": false, "title": "Vue d'ensemble", "type": "link", "url": "/d/netflix-reco-live/movielens-overview-dashboard"},
-    {"includeVars": true, "keepTime": true, "tags": [], "targetBlank": false, "title": "Classement", "type": "link", "url": "/d/movielens-ranking-api/movielens-ranking-dashboard"},
-    {"includeVars": true, "keepTime": true, "tags": [], "targetBlank": false, "title": "Catalogue & API", "type": "link", "url": "/d/movielens-catalog-api/movielens-catalog-api-dashboard"}
+    {
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Vue d'ensemble",
+      "type": "link",
+      "url": "/d/netflix-reco-live/movielens-overview-dashboard"
+    },
+    {
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Classement",
+      "type": "link",
+      "url": "/d/movielens-ranking-api/movielens-ranking-dashboard"
+    },
+    {
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Catalogue & API",
+      "type": "link",
+      "url": "/d/movielens-catalog-api/movielens-catalog-api-dashboard"
+    }
   ],
   "liveNow": false,
   "panels": [
@@ -15,8 +41,16 @@
       "id": 1,
       "type": "text",
       "title": "",
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
-      "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
       "options": {
         "mode": "html",
         "content": "<div style=\"padding:12px 8px;font-family:Inter,Helvetica,Arial,sans-serif;\"><div style=\"font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:#ff6b35;font-weight:700;\">Vue d'ensemble</div><div style=\"font-size:30px;line-height:1.2;color:#ffffff;font-weight:700;margin-top:4px;\">Centre de pilotage MovieLens</div><div style=\"font-size:14px;color:#b3b3b3;margin-top:6px;\">Vue synthese des performances predictives, de la qualite du classement, du rappel de candidats et des recommandations en direct.</div></div>"
@@ -26,14 +60,74 @@
       "id": 2,
       "type": "stat",
       "title": "RMSE",
-      "gridPos": {"h": 8, "w": 4, "x": 0, "y": 4},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=rmse", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=rmse",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "decimals": 3,
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.85}, {"color": "red", "value": 1.0}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.85
+              },
+              {
+                "color": "red",
+                "value": 1.0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -42,14 +136,74 @@
       "id": 3,
       "type": "stat",
       "title": "MAE",
-      "gridPos": {"h": 8, "w": 4, "x": 4, "y": 4},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=mae", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 4,
+        "y": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=mae",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "decimals": 3,
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -58,14 +212,74 @@
       "id": 4,
       "type": "stat",
       "title": "Precision@10",
-      "gridPos": {"h": 8, "w": 4, "x": 8, "y": 4},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=precision_at_10", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 8,
+        "y": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=precision_at_10",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.02}, {"color": "green", "value": 0.05}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.02
+              },
+              {
+                "color": "green",
+                "value": 0.05
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -74,14 +288,74 @@
       "id": 5,
       "type": "stat",
       "title": "Recall@10",
-      "gridPos": {"h": 8, "w": 4, "x": 12, "y": 4},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=recall_at_10", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 12,
+        "y": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=recall_at_10",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.04}, {"color": "green", "value": 0.08}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.04
+              },
+              {
+                "color": "green",
+                "value": 0.08
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -90,14 +364,74 @@
       "id": 6,
       "type": "stat",
       "title": "NDCG@10",
-      "gridPos": {"h": 8, "w": 4, "x": 16, "y": 4},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=ndcg_at_10", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=ndcg_at_10",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.04}, {"color": "green", "value": 0.08}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.04
+              },
+              {
+                "color": "green",
+                "value": 0.08
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -106,14 +440,74 @@
       "id": 7,
       "type": "stat",
       "title": "Rappel candidats test",
-      "gridPos": {"h": 8, "w": 4, "x": 20, "y": 4},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=test_candidate_recall", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=test_candidate_recall",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "green", "value": 0.7}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.7
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -122,14 +516,74 @@
       "id": 8,
       "type": "stat",
       "title": "Couverture catalogue",
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 12},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=catalog_coverage_ratio", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=catalog_coverage_ratio",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.05}, {"color": "green", "value": 0.1}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.05
+              },
+              {
+                "color": "green",
+                "value": 0.1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -138,14 +592,74 @@
       "id": 9,
       "type": "stat",
       "title": "Couverture utilisateurs",
-      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 12},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=user_coverage_ratio", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=user_coverage_ratio",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "green", "value": 0.9}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "green",
+                "value": 0.9
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -154,24 +668,133 @@
       "id": 10,
       "type": "stat",
       "title": "Films recommandes",
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 12},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=movies_recommended", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
-      "fieldConfig": {"defaults": {}, "overrides": []}
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=movies_recommended",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      }
     },
     {
       "id": 11,
       "type": "stat",
       "title": "Part long tail",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 12},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "", "url": "/metrics/value?metric=long_tail_recommendation_share", "columns": [{"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "horizontal", "textMode": "value_and_name", "graphMode": "none", "colorMode": "background_solid"},
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/value?metric=long_tail_recommendation_share",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "background_solid"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.2}]}
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
+                "color": "green",
+                "value": 0.2
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
         },
         "overrides": []
       }
@@ -180,36 +803,234 @@
       "id": 12,
       "type": "table",
       "title": "Toutes les metriques",
-      "gridPos": {"h": 12, "w": 8, "x": 0, "y": 20},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "rows", "url": "/metrics/rows", "columns": [{"selector": "metric", "text": "metric", "type": "string"}, {"selector": "value", "text": "value", "type": "number"}]}],
-      "options": {"showHeader": true},
-      "fieldConfig": {"defaults": {}, "overrides": []}
+      "gridPos": {
+        "h": 12,
+        "w": 8,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "rows",
+          "url": "https://recommandation-film-wpqz.onrender.com/metrics/rows",
+          "columns": [
+            {
+              "selector": "metric",
+              "text": "metric",
+              "type": "string"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     },
     {
       "id": 13,
       "type": "table",
       "title": "Dernieres recommandations",
-      "gridPos": {"h": 12, "w": 16, "x": 8, "y": 20},
-      "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"},
-      "targets": [{"refId": "A", "datasource": {"type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}"}, "source": "url", "format": "table", "parser": "backend", "type": "json", "root_selector": "recommendations", "url": "/recommend?user_id=${user_id}&k=${top_k}", "columns": [{"selector": "movieId", "text": "movieId", "type": "number"}, {"selector": "title", "text": "title", "type": "string"}, {"selector": "genres", "text": "genres", "type": "string"}, {"selector": "rank", "text": "rank", "type": "number"}, {"selector": "final_score", "text": "final_score", "type": "number"}, {"selector": "explanation", "text": "explanation", "type": "string"}]}],
-      "options": {"showHeader": true},
-      "fieldConfig": {"defaults": {}, "overrides": []}
+      "gridPos": {
+        "h": 12,
+        "w": 16,
+        "x": 8,
+        "y": 20
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${DS_INFINITY}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${DS_INFINITY}"
+          },
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "type": "json",
+          "root_selector": "recommendations",
+          "url": "https://recommandation-film-wpqz.onrender.com/recommend?user_id=${user_id}&k=${top_k}",
+          "columns": [
+            {
+              "selector": "movieId",
+              "text": "movieId",
+              "type": "number"
+            },
+            {
+              "selector": "title",
+              "text": "title",
+              "type": "string"
+            },
+            {
+              "selector": "genres",
+              "text": "genres",
+              "type": "string"
+            },
+            {
+              "selector": "rank",
+              "text": "rank",
+              "type": "number"
+            },
+            {
+              "selector": "final_score",
+              "text": "final_score",
+              "type": "number"
+            },
+            {
+              "selector": "explanation",
+              "text": "explanation",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     }
   ],
   "refresh": "5m",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["movielens", "recommender", "api", "overview"],
+  "tags": [
+    "movielens",
+    "recommender",
+    "api",
+    "overview"
+  ],
   "templating": {
     "list": [
-      {"current": {"selected": false, "text": "Infinity", "value": "Infinity"}, "hide": 0, "includeAll": false, "label": "Datasource Infinity", "multi": false, "name": "DS_INFINITY", "options": [], "query": "yesoreyeram-infinity-datasource", "refresh": 1, "regex": "", "skipUrlSync": false, "type": "datasource"},
-      {"current": {"selected": false, "text": "https://recommandation-film-wpqz.onrender.com", "value": "https://recommandation-film-wpqz.onrender.com"}, "hide": 0, "label": "Base API", "name": "api_base", "options": [{"selected": true, "text": "https://recommandation-film-wpqz.onrender.com", "value": "https://recommandation-film-wpqz.onrender.com"}], "query": "https://recommandation-film-wpqz.onrender.com", "skipUrlSync": false, "type": "textbox"},
-      {"current": {"selected": false, "text": "1", "value": "1"}, "hide": 0, "label": "ID utilisateur", "name": "user_id", "options": [{"selected": true, "text": "1", "value": "1"}], "query": "1", "skipUrlSync": false, "type": "textbox"},
-      {"current": {"selected": true, "text": "10", "value": "10"}, "hide": 0, "includeAll": false, "label": "Top K", "multi": false, "name": "top_k", "options": [{"selected": false, "text": "5", "value": "5"}, {"selected": true, "text": "10", "value": "10"}, {"selected": false, "text": "20", "value": "20"}], "query": "5,10,20", "skipUrlSync": false, "type": "custom"}
+      {
+        "current": {
+          "selected": false,
+          "text": "Infinity API",
+          "value": "Infinity API"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource Infinity",
+        "multi": false,
+        "name": "DS_INFINITY",
+        "options": [
+          {
+            "selected": true,
+            "text": "Infinity API",
+            "value": "Infinity API"
+          }
+        ],
+        "query": "yesoreyeram-infinity-datasource",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "https://recommandation-film-wpqz.onrender.com",
+          "value": "https://recommandation-film-wpqz.onrender.com"
+        },
+        "hide": 0,
+        "label": "Base API",
+        "name": "api_base",
+        "options": [
+          {
+            "selected": true,
+            "text": "https://recommandation-film-wpqz.onrender.com",
+            "value": "https://recommandation-film-wpqz.onrender.com"
+          }
+        ],
+        "query": "https://recommandation-film-wpqz.onrender.com",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "1",
+          "value": "1"
+        },
+        "hide": 0,
+        "label": "ID utilisateur",
+        "name": "user_id",
+        "options": [
+          {
+            "selected": true,
+            "text": "1",
+            "value": "1"
+          }
+        ],
+        "query": "1",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "10",
+          "value": "10"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Top K",
+        "multi": false,
+        "name": "top_k",
+        "options": [
+          {
+            "selected": false,
+            "text": "5",
+            "value": "5"
+          },
+          {
+            "selected": true,
+            "text": "10",
+            "value": "10"
+          },
+          {
+            "selected": false,
+            "text": "20",
+            "value": "20"
+          }
+        ],
+        "query": "5,10,20",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
     ]
   },
-  "time": {"from": "now-30d", "to": "now"},
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
   "title": "Tableau de bord MovieLens - Vue d'ensemble",
