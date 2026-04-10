@@ -78,6 +78,27 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@APP.get("/")
+def root() -> Dict[str, Any]:
+    return {
+        "service": "MovieLens Hybrid Recommender API",
+        "status": "ok",
+        "docs_url": "/docs",
+        "endpoints": [
+            "/health",
+            "/metrics",
+            "/metrics/rows",
+            "/metrics/value?metric=precision_at_10",
+            "/metrics/history?metric=ndcg_at_10",
+            "/dashboard/summary",
+            "/dashboard/genres?limit=10",
+            "/dashboard/movies?limit=20",
+            "/dashboard/final-score-distribution?bins=10",
+            "/recommend?user_id=1&k=10",
+        ],
+    }
+
+
 @APP.get("/recommend")
 def recommend(
     user_id: int = Query(..., ge=1),

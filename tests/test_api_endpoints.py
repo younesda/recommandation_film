@@ -75,6 +75,10 @@ def test_api_metrics_and_recommend() -> None:
         health_resp = client.get("/health")
         assert health_resp.status_code == 200
 
+        root_resp = client.get("/")
+        assert root_resp.status_code == 200
+        assert root_resp.json()["status"] == "ok"
+
         metrics_resp = client.get("/metrics")
         assert metrics_resp.status_code == 200
         assert metrics_resp.json()["rmse"] == 0.7
