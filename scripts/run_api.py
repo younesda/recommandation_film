@@ -12,7 +12,9 @@ if PROJECT_ROOT not in sys.path:
 
 
 def main() -> None:
-    uvicorn.run("src.api.main:APP", host="0.0.0.0", port=8000, reload=False)
+    host = os.getenv("API_HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
+    uvicorn.run("src.api.main:APP", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

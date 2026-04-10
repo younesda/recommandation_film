@@ -62,7 +62,9 @@ This exports:
 Import these JSON dashboards in Grafana:
 - `dashboards/recommender_quality_dashboard.json`
 - `dashboards/recommender_catalog_dashboard.json`
-- `dashboards/netflix_api_dashboard.json` (API-only, no PostgreSQL)
+- `dashboards/netflix_api_dashboard.json` (API overview)
+- `dashboards/netflix_api_ranking_dashboard.json` (ranking-focused API dashboard)
+- `dashboards/netflix_api_catalog_dashboard.json` (catalog + live API dashboard)
 
 ## Grafana Without PostgreSQL (Parquet + API)
 Use FastAPI as datasource with Grafana Infinity plugin.
@@ -100,9 +102,44 @@ Set root selector to `rows`.
 Set root selector to `recommendations`.
 
 Netflix-style option:
-- Import `dashboards/netflix_api_dashboard.json`
+- Import:
+  - `dashboards/netflix_api_dashboard.json`
+  - `dashboards/netflix_api_ranking_dashboard.json`
+  - `dashboards/netflix_api_catalog_dashboard.json`
 - Set Infinity datasource variable `DS_INFINITY`
 - Keep `api_base` as `http://localhost:8000` (or your server URL)
+
+## Hosted Demo
+The repo now includes a lightweight hosted demo under `hosting/demo_data/`:
+- reference metrics from the best run
+- a small recommendation sample for a few users
+- history data for dashboard tables
+
+### Run the hosted demo locally with Docker
+```bash
+docker build -t movielens-api .
+docker run -p 8000:8000 movielens-api
+```
+
+### Deploy on Render
+This repo includes `render.yaml` and a Docker image definition.
+
+The default hosted deployment uses:
+- `RECOMMENDATIONS_PATH=/app/hosting/demo_data/recommendations.parquet`
+- `METRICS_PATH=/app/hosting/demo_data/metrics.json`
+- `SEEN_INTERACTIONS_PATH=/app/hosting/demo_data/seen_interactions.parquet`
+- `METRICS_HISTORY_PATH=/app/hosting/demo_data/metrics_history.jsonl`
+
+This is ideal for a student demo because it deploys directly from GitHub without uploading the full `data/processed/` directory.
+
+### Full deployment with real pipeline artifacts
+If you want the hosted API to serve the complete generated artifacts instead of the lightweight demo, override:
+- `RECOMMENDATIONS_PATH`
+- `METRICS_PATH`
+- `SEEN_INTERACTIONS_PATH`
+- `METRICS_HISTORY_PATH`
+
+pointing them to your real `data/processed/...` outputs on the target machine or mounted volume.
 
 ## Tests
 ```bash

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: movielens-recommender-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: RECOMMENDATIONS_PATH
+        value: /app/hosting/demo_data/recommendations.parquet
+      - key: METRICS_PATH
+        value: /app/hosting/demo_data/metrics.json
+      - key: SEEN_INTERACTIONS_PATH
+        value: /app/hosting/demo_data/seen_interactions.parquet
+      - key: METRICS_HISTORY_PATH
+        value: /app/hosting/demo_data/metrics_history.jsonl
