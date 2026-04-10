@@ -216,6 +216,54 @@ def build_ranker_training_frame(
     settings: PipelineSettings | None = None,
 ) -> DataFrame:
     cfg = settings or PipelineSettings()
+    labeled_df = attach_ranking_labels(
+        feature_df=feature_df,
+        ground_truth_df=ground_truth_df,
+        positive_threshold=positive_threshold,
+    )
+
+    eligible_users_df = (
+        labeled_df.groupBy("userId")
+        .agg(
+            F.max("label").alias("max_label"),
+            F.count("*").alias("candidate_count"),
+        )
+        .filter((F.col("max_label") > F.lit(0)) & (F.col("candidate_count") > F.lit(1)))
+        .select("userId")
+    )
+    eligible_training_df = labeled_df.join(eligible_users_df, on="userId", how="inner")
+    proxy_score = (
+        (F.lit(0.45) * F.coalesce(F.col("cf_score"), F.lit(0.0)))
+        + (F.lit(0.30) * F.coalesce(F.col("content_score"), F.lit(0.0)))
+        + (F.lit(0.15) * F.coalesce(F.col("item_popularity_score"), F.lit(0.0)))
+        + (F.lit(0.10) * F.coalesce(F.col("item_recent_score"), F.lit(0.0)))
+    )
+    negative_proxy_window = Window.partitionBy("userId").orderBy(proxy_score.desc(), F.col("movieId").asc())
+    negative_random_window = Window.partitionBy("userId").orderBy(F.rand(cfg.ranker.random_state), F.col("movieId").asc())
+
+    negatives_ranked_df = (
+        eligible_training_df.filter(F.col("is_positive_label") == F.lit(0))
+        .withColumn("negative_proxy_rank", F.row_number().over(negative_proxy_window))
+        .withColumn("negative_random_rank", F.row_number().over(negative_random_window))
+        .select("userId", "movieId", "negative_proxy_rank", "negative_random_rank")
+    )
+
+    return (
+        eligible_training_df.join(negatives_ranked_df, on=["userId", "movieId"], how="left")
+        .filter(
+            (F.col("is_positive_label") > F.lit(0))
+            | (F.col("negative_proxy_rank") <= F.lit(cfg.ranker.max_training_candidates_per_user))
+            | (F.col("negative_random_rank") <= F.lit(cfg.ranker.additional_random_negatives_per_user))
+        )
+        .drop("negative_proxy_rank", "negative_random_rank")
+    )
+
+
+def attach_ranking_labels(
+    feature_df: DataFrame,
+    ground_truth_df: DataFrame,
+    positive_threshold: float,
+) -> DataFrame:
     label_df = (
         ground_truth_df.select("userId", "movieId", "rating")
         .withColumn(
@@ -228,40 +276,10 @@ def build_ranker_training_frame(
         .select("userId", "movieId", "rating", "label")
     )
 
-    training_df = (
+    return (
         feature_df.join(label_df, on=["userId", "movieId"], how="left")
         .fillna({"rating": 0.0, "label": 0})
         .withColumn("is_positive_label", F.when(F.col("label") > F.lit(0), F.lit(1)).otherwise(F.lit(0)))
-    )
-
-    eligible_users_df = (
-        training_df.groupBy("userId")
-        .agg(
-            F.max("label").alias("max_label"),
-            F.count("*").alias("candidate_count"),
-        )
-        .filter((F.col("max_label") > F.lit(0)) & (F.col("candidate_count") > F.lit(1)))
-        .select("userId")
-    )
-    eligible_training_df = training_df.join(eligible_users_df, on="userId", how="inner")
-    proxy_score = (
-        (F.lit(0.45) * F.coalesce(F.col("cf_score"), F.lit(0.0)))
-        + (F.lit(0.30) * F.coalesce(F.col("content_score"), F.lit(0.0)))
-        + (F.lit(0.15) * F.coalesce(F.col("item_popularity_score"), F.lit(0.0)))
-        + (F.lit(0.10) * F.coalesce(F.col("item_recent_score"), F.lit(0.0)))
-    )
-    rank_window = Window.partitionBy("userId").orderBy(
-        F.col("is_positive_label").desc(),
-        proxy_score.desc(),
-        F.col("movieId").asc(),
-    )
-    return (
-        eligible_training_df.withColumn("ranker_train_rank", F.row_number().over(rank_window))
-        .filter(
-            (F.col("is_positive_label") > F.lit(0))
-            | (F.col("ranker_train_rank") <= F.lit(cfg.ranker.max_training_candidates_per_user))
-        )
-        .drop("ranker_train_rank")
     )
 
 
@@ -327,6 +345,7 @@ def _evaluate_ranked_frame(pdf: pd.DataFrame, score_col: str, top_k: int) -> Dic
 
 def train_xgb_ranker(
     ranking_train_df: DataFrame,
+    ranking_eval_df: DataFrame | None = None,
     settings: PipelineSettings | None = None,
 ) -> tuple[Any, list[str], Dict[str, float | int | str]]:
     cfg = settings or PipelineSettings()
@@ -351,7 +370,12 @@ def train_xgb_ranker(
         train_users = unique_users
 
     train_pdf = pdf[pdf["userId"].isin(train_users)].reset_index(drop=True)
-    eval_pdf = pdf[pdf["userId"].isin(holdout_users)].reset_index(drop=True)
+    if ranking_eval_df is None:
+        eval_pdf = pdf[pdf["userId"].isin(holdout_users)].reset_index(drop=True)
+    else:
+        eval_pdf = _frame_to_pandas(ranking_eval_df, feature_cols)
+        if not eval_pdf.empty:
+            eval_pdf = eval_pdf[eval_pdf["userId"].isin(holdout_users)].reset_index(drop=True)
 
     param_grid = product(
         ranker_cfg.n_estimators_candidates,

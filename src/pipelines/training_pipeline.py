@@ -37,6 +37,7 @@ from src.models.content_model import (
 )
 from src.models.hybrid_model import select_top_k_recommendations
 from src.models.ranking_model import (
+    attach_ranking_labels,
     build_ranker_training_frame,
     build_ranking_features,
     score_candidates_with_ranker,
@@ -484,7 +485,16 @@ def run_pipeline(
         positive_threshold=cfg.min_positive_rating,
         settings=cfg,
     ).cache()
-    ranker_model, ranker_feature_cols, ranker_info = train_xgb_ranker(ranker_training_df, settings=cfg)
+    ranker_eval_df = attach_ranking_labels(
+        feature_df=ranking_train_feature_df,
+        ground_truth_df=val_df,
+        positive_threshold=cfg.min_positive_rating,
+    ).cache()
+    ranker_model, ranker_feature_cols, ranker_info = train_xgb_ranker(
+        ranker_training_df,
+        ranking_eval_df=ranker_eval_df,
+        settings=cfg,
+    )
 
     explicit_als_model = retrain_best_als(train_df, val_df, best_als_params, settings=cfg)
     ranking_als_model = retrain_best_ranking_als(train_df, val_df, best_ranking_als_params, settings=cfg)

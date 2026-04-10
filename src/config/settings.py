@@ -39,6 +39,7 @@ class RankerSettings:
     holdout_user_modulo: int = 5
     min_training_groups: int = 25
     max_training_candidates_per_user: int = 200
+    additional_random_negatives_per_user: int = 25
     scoring_chunk_size: int = 25000
     n_estimators_candidates: List[int] = field(default_factory=lambda: [150, 250])
     max_depth_candidates: List[int] = field(default_factory=lambda: [4, 6])
