@@ -1,0 +1,42 @@
+{
+  "run_type": "full",
+  "status": "reference_run",
+  "generated_at_utc": "2026-04-10T00:35:53.993196+00:00",
+  "primary_metrics": {
+    "rmse": 0.7620446193084623,
+    "mae": 0.6050855717168749,
+    "precision_at_10": 0.038644067796610185,
+    "recall_at_10": 0.0730282705526668,
+    "ndcg_at_10": 0.06818652417199587
+  },
+  "ranking_metrics": {
+    "candidate_pool_size": 400.0,
+    "val_candidate_recall": 0.7782379056704561,
+    "test_candidate_recall": 0.762818693480581,
+    "ranker_val_precision_at_k": 0.24128440366972478,
+    "ranker_val_recall_at_k": 0.31308884692688227,
+    "ranker_val_ndcg_at_k": 0.3591429597452747
+  },
+  "ranking_config": {
+    "content_tag_weight": 0.3,
+    "ranker_n_estimators": 250.0,
+    "ranker_max_depth": 6.0,
+    "ranker_learning_rate": 0.1,
+    "ranker_min_child_weight": 5.0,
+    "ranker_feature_count": 38.0,
+    "ranking_als_rank": 96.0,
+    "ranking_als_reg_param": 0.1,
+    "ranking_als_alpha": 10.0,
+    "ranking_als_max_iter": 15.0
+  },
+  "coverage_metrics": {
+    "active_users": 590.0,
+    "active_movies": 9742.0,
+    "users_covered": 590.0,
+    "movies_recommended": 692.0,
+    "user_coverage_ratio": 1.0,
+    "catalog_coverage_ratio": 0.07103264216793266,
+    "genres_covered": 18.0,
+    "long_tail_recommendation_share": 0.010508474576271187
+  }
+}
